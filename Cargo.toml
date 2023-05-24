@@ -1,0 +1,17 @@
+[package]
+name = "hdl-benchmarks"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dimitris Mouris <jimouris@udel.edu>", "Charles Gouert <cgouert@udel.edu>"]
+license = "MIT"
+
+[dependencies]
+clap = "4.2.2"
+
+[[bin]]
+name = "preprocessor"
+path = "src/preprocessor.rs"
+
+[[bin]]
+name = "generate_adder"
+path = "src/generate_adder.rs"

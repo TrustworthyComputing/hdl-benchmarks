@@ -1,0 +1,4 @@
+wire, value
+sum[0], true
+sum[1], true
+cout, false
