@@ -184,29 +184,51 @@ fn convert_verilog(
                     lut_line += ", ";
                     let mut curr_token = tokens[4];
                     let mut token_idx = 4;
-                    loop {
-                        if !curr_token.contains(">>") && !curr_token.contains('{') {
-                            curr_token = curr_token.trim_start_matches('_').trim_end_matches(',');
-                            curr_token = curr_token.trim_end_matches('_');
-                            if wire_dict.contains_key(curr_token) {
-                                lut_line += &wire_dict[curr_token];
-                            } else {
-                                lut_line += curr_token;
-                            }
-                            lut_line += ", ";
+                    if !line.contains("}") { // 1 input LUT
+                        curr_token = tokens[5];
+                        curr_token = curr_token.trim_start_matches('_').trim_end_matches(';');
+                        curr_token = curr_token.trim_end_matches('_');
+                        
+                        if wire_dict.contains_key(curr_token) {
+                            lut_line += &wire_dict[curr_token];
+                        } else {
+                            lut_line += curr_token;
                         }
-                        token_idx += 1;
-                        curr_token = tokens[token_idx];
-                        if curr_token.contains("};") {
-                            // end of lut statement
-                            curr_token = tokens[1].trim_start_matches('_').trim_end_matches('_');
-                            if wire_dict.contains_key(curr_token) {
-                                lut_line += &wire_dict[curr_token];
-                            } else {
-                                lut_line += curr_token;
+                        lut_line += ", ";
+                        // end of lut statement
+                        curr_token = tokens[1].trim_start_matches('_').trim_end_matches('_');
+                        if wire_dict.contains_key(curr_token) {
+                            lut_line += &wire_dict[curr_token];
+                        } else {
+                            lut_line += curr_token;
+                        }
+                        lut_line += ");";
+                    }
+                    else {
+                        loop {
+                            if !curr_token.contains(">>") && !curr_token.contains('{') {
+                                curr_token = curr_token.trim_start_matches('_').trim_end_matches(',');
+                                curr_token = curr_token.trim_end_matches('_');
+                                if wire_dict.contains_key(curr_token) {
+                                    lut_line += &wire_dict[curr_token];
+                                } else {
+                                    lut_line += curr_token;
+                                }
+                                lut_line += ", ";
                             }
-                            lut_line += ");";
-                            break;
+                            token_idx += 1;
+                            curr_token = tokens[token_idx];
+                            if curr_token.contains("};") {
+                                // end of lut statement
+                                curr_token = tokens[1].trim_start_matches('_').trim_end_matches('_');
+                                if wire_dict.contains_key(curr_token) {
+                                    lut_line += &wire_dict[curr_token];
+                                } else {
+                                    lut_line += curr_token;
+                                }
+                                lut_line += ");";
+                                break;
+                            }
                         }
                     }
                     gates.push(lut_line.to_string());
