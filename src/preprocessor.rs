@@ -45,41 +45,25 @@ fn parse_args() -> (String, String) {
 
 fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>) {
     let mut keys_to_modify = Vec::new();
-
     for (key, value) in assign_dict.iter() {
         if assign_dict.contains_key(value) {
             keys_to_modify.push(key.clone());
         }
     }
-    println!("keys_to_modify: {:?}", keys_to_modify);
     for key in keys_to_modify {
-        let value = assign_dict[&key].clone();
-        let mut tmp_key = value;
-        while assign_dict.contains_key(&tmp_key) {
-            tmp_key = assign_dict[&tmp_key].clone();
+        let mut value = assign_dict[&key].clone();
+        while assign_dict.contains_key(&value) {
+            value = assign_dict[&value].clone();
         }
-        println!("Key: {:?}", &key);
-        println!("New Val: {:?}", &tmp_key);
-        assign_dict.insert(key.clone(), tmp_key.clone());
+        assign_dict.insert(key, value);
     }
 }
-
-// fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>) {
-//     for key in assign_dict.clone().keys() {
-//         println!("Key: {:?}", &key);
-//         let mut tmp_key = key;
-//         while assign_dict.contains_key(&assign_dict[tmp_key]) {
-//             println!("tmp_key: {:?}", &tmp_key);
-//             assign_dict.insert(key.to_string(), assign_dict[tmp_key].clone().to_string());
-//             tmp_key = &assign_dict[tmp_key].clone().to_string();
-//         }    
-//     }
-// }
 
 fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
     let in_file = File::open(in_file_name).expect("Failed to open file");
     let reader = BufReader::new(in_file);
-    let mut assign_dict : HashMap<String, String> = HashMap::new();
+    let mut assign_dict: HashMap<String, String> = HashMap::new();
+    let mut assign_dict_for_outputs: HashMap<String, String> = HashMap::new();
     let mut output_ports = HashSet::new();
     for line in reader.lines() {
         let line = line.expect("Failed to read line").trim().to_owned();
@@ -109,20 +93,39 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                 .trim_start_matches('_')
                 .trim_end_matches('_')
                 .to_string();
-            let mut input = tokens[3]
+            let input = tokens[3]
                 .trim_end_matches(';')
                 .trim_start_matches('_')
                 .trim_end_matches('_')
                 .to_string();
-            // if output_ports.contains(&output.split('[').next().unwrap().to_string()) {
-            //     assign_dict.insert(input, output);
-            // } else {
-            //     assign_dict.insert(output, input);
-            // }
-            assign_dict.insert(output, input);
+
+// TODO
+// assign x = input
+// assign y = x
+// assign z = y
+// assign output = z
+
+// assign_dict{ x, input };
+// assign_dict{ y, x };
+// assign_dict{ z, y };
+// assign_dict{ z, output};
+
+            if output_ports.contains(&output) {
+                println!("input {}", input);
+                println!("output {}", output);
+
+                // assign_dict.insert(input, output);
+                assign_dict_for_outputs.insert(input, output);
+            } else {
+                assign_dict.insert(output, input);
+            }
         }
     }
+
     postprocess_assign_dict(&mut assign_dict);
+
+    assign_dict.extend(assign_dict_for_outputs);
+
     assign_dict
 }
 
@@ -222,7 +225,7 @@ fn convert_verilog(
                         curr_token = tokens[5];
                         curr_token = curr_token.trim_start_matches('_').trim_end_matches(';');
                         curr_token = curr_token.trim_end_matches('_');
-                        
+
                         if wire_dict.contains_key(curr_token) {
                             lut_line += &wire_dict[curr_token];
                         } else {
