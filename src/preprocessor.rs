@@ -43,25 +43,62 @@ fn parse_args() -> (String, String) {
     (in_file_name, out_file_name)
 }
 
-fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>) {
+// TODO: If an Input -> Output entry exists after this function, need to create
+// a buffer gate or maybe add a FF
+fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>, wire_to_port: HashMap<String, String>, output_ports: HashSet<String>) {
     let mut keys_to_modify = Vec::new();
-
+    let mut wire_to_port_map : HashMap<String, String> = HashMap::new();
+    // println!("assign_dict_before: {:?}", &assign_dict);
     for (key, value) in assign_dict.iter() {
-        if assign_dict.contains_key(value) {
+        let isPort = wire_to_port.contains_key(value);
+        if assign_dict.contains_key(value) || isPort {
             keys_to_modify.push(key.clone());
         }
-    }
-    println!("keys_to_modify: {:?}", keys_to_modify);
-    for key in keys_to_modify {
-        let value = assign_dict[&key].clone();
-        let mut tmp_key = value;
-        while assign_dict.contains_key(&tmp_key) {
-            tmp_key = assign_dict[&tmp_key].clone();
+        if isPort {
+            let tmp_val = wire_to_port[value].clone();
+            let mut tmp_key = value.clone();
+            wire_to_port_map.insert(tmp_key.clone(), tmp_val.clone());
+            while assign_dict.contains_key(&tmp_key) {
+                tmp_key = assign_dict[&tmp_key].clone();
+                wire_to_port_map.insert(tmp_key.clone(), tmp_val.clone());
+            }
         }
-        println!("Key: {:?}", &key);
-        println!("New Val: {:?}", &tmp_key);
-        assign_dict.insert(key.clone(), tmp_key.clone());
     }
+    println!("wire_to_port_map: {:?}", wire_to_port_map);
+    for (key, value) in wire_to_port_map.iter() {
+        assign_dict.insert(key.clone(), value.clone());
+    }
+    // for key in keys_to_modify {
+    //     if output_ports.contains(&key) {
+    //         continue;
+    //     }
+    //     if output_ports.contains(&assign_dict[&key.clone()]) {
+    //         continue;
+    //     }
+    //     if wire_to_port.contains_key(&key) {
+    //         // println!("key: {:?}", &key);
+    //         assign_dict.insert(key.clone(), wire_to_port[&key].clone());
+    //         continue;
+    //     }
+    //     let value = assign_dict[&key].clone();
+    //     let mut tmp_key = value;
+    //     while assign_dict.contains_key(&tmp_key) {
+    //         tmp_key = assign_dict[&tmp_key].clone();
+    //         // Needed to avoid infinite loops caused by circular deps
+    //         if wire_to_port.contains_key(&tmp_key) {
+    //             break;
+    //         }
+    //     }
+    //     if wire_to_port.contains_key(&tmp_key) {
+    //         let tmp_val = wire_to_port[&tmp_key].clone();
+    //         println!("({:?}, {:?})", &tmp_key, &tmp_val);
+    //         assign_dict.insert(tmp_key.clone(), tmp_val.clone());
+    //         assign_dict.remove(&tmp_val.clone());
+    //         continue;
+    //     }
+    //     assign_dict.insert(key.clone(), tmp_key.clone());
+    // }
+    // println!("assign_dict_after: {:?}", &assign_dict);
 }
 
 // fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>) {
@@ -80,6 +117,7 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
     let in_file = File::open(in_file_name).expect("Failed to open file");
     let reader = BufReader::new(in_file);
     let mut assign_dict : HashMap<String, String> = HashMap::new();
+    let mut wire_to_port : HashMap<String, String> = HashMap::new();
     let mut output_ports = HashSet::new();
     for line in reader.lines() {
         let line = line.expect("Failed to read line").trim().to_owned();
@@ -114,15 +152,14 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                 .trim_start_matches('_')
                 .trim_end_matches('_')
                 .to_string();
-            // if output_ports.contains(&output.split('[').next().unwrap().to_string()) {
-            //     assign_dict.insert(input, output);
-            // } else {
-            //     assign_dict.insert(output, input);
-            // }
+            if output_ports.contains(&output.split('[').next().unwrap().to_string()) {
+                wire_to_port.insert(input.clone(), output.clone());
+            }
             assign_dict.insert(output, input);
         }
     }
-    postprocess_assign_dict(&mut assign_dict);
+    println!("wire_to_port: {:?}", &wire_to_port);
+    postprocess_assign_dict(&mut assign_dict, wire_to_port, output_ports);
     assign_dict
 }
 
