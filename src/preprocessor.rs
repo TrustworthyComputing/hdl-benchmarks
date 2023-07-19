@@ -48,13 +48,12 @@ fn parse_args() -> (String, String) {
 fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>, wire_to_port: HashMap<String, String>, output_ports: HashSet<String>) {
     let mut keys_to_modify = Vec::new();
     let mut wire_to_port_map : HashMap<String, String> = HashMap::new();
-    // println!("assign_dict_before: {:?}", &assign_dict);
     for (key, value) in assign_dict.iter() {
-        let isPort = wire_to_port.contains_key(value);
-        if assign_dict.contains_key(value) || isPort {
+        let is_port = wire_to_port.contains_key(value);
+        if assign_dict.contains_key(value) || is_port {
             keys_to_modify.push(key.clone());
         }
-        if isPort {
+        if is_port {
             let tmp_val = wire_to_port[value].clone();
             let mut tmp_key = value.clone();
             wire_to_port_map.insert(tmp_key.clone(), tmp_val.clone());
@@ -64,54 +63,10 @@ fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>, wire_to_po
             }
         }
     }
-    println!("wire_to_port_map: {:?}", wire_to_port_map);
     for (key, value) in wire_to_port_map.iter() {
         assign_dict.insert(key.clone(), value.clone());
     }
-    // for key in keys_to_modify {
-    //     if output_ports.contains(&key) {
-    //         continue;
-    //     }
-    //     if output_ports.contains(&assign_dict[&key.clone()]) {
-    //         continue;
-    //     }
-    //     if wire_to_port.contains_key(&key) {
-    //         // println!("key: {:?}", &key);
-    //         assign_dict.insert(key.clone(), wire_to_port[&key].clone());
-    //         continue;
-    //     }
-    //     let value = assign_dict[&key].clone();
-    //     let mut tmp_key = value;
-    //     while assign_dict.contains_key(&tmp_key) {
-    //         tmp_key = assign_dict[&tmp_key].clone();
-    //         // Needed to avoid infinite loops caused by circular deps
-    //         if wire_to_port.contains_key(&tmp_key) {
-    //             break;
-    //         }
-    //     }
-    //     if wire_to_port.contains_key(&tmp_key) {
-    //         let tmp_val = wire_to_port[&tmp_key].clone();
-    //         println!("({:?}, {:?})", &tmp_key, &tmp_val);
-    //         assign_dict.insert(tmp_key.clone(), tmp_val.clone());
-    //         assign_dict.remove(&tmp_val.clone());
-    //         continue;
-    //     }
-    //     assign_dict.insert(key.clone(), tmp_key.clone());
-    // }
-    // println!("assign_dict_after: {:?}", &assign_dict);
 }
-
-// fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>) {
-//     for key in assign_dict.clone().keys() {
-//         println!("Key: {:?}", &key);
-//         let mut tmp_key = key;
-//         while assign_dict.contains_key(&assign_dict[tmp_key]) {
-//             println!("tmp_key: {:?}", &tmp_key);
-//             assign_dict.insert(key.to_string(), assign_dict[tmp_key].clone().to_string());
-//             tmp_key = &assign_dict[tmp_key].clone().to_string();
-//         }    
-//     }
-// }
 
 fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
     let in_file = File::open(in_file_name).expect("Failed to open file");
@@ -124,14 +79,34 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
 
         if line.contains("output") {
             if line.contains('[') {
-                output_ports.insert(
-                    line.split(' ')
-                        .nth(2)
-                        .unwrap()
-                        .trim_end_matches(';')
-                        .to_string(),
-                );
-            } else {
+                // Find the positions of '[' and ':'
+                let open_bracket_pos = line.find('[');
+                let colon_pos = line.find(':');
+
+                // Ensure both '[' and ':' are present in the string
+                if let (Some(open_bracket), Some(colon)) = (open_bracket_pos, colon_pos) {
+                    // Extract the substring between '[' and ':'
+                    let number_str = &line[open_bracket + 1..colon];
+
+                    // Parse the substring to an integer
+                    if let Ok(number) = number_str.parse::<i32>() {
+                        for curr_wire in 0..number+1 {
+                            output_ports.insert(
+                                line.split(' ')
+                                .nth(2)
+                                .unwrap()
+                                .trim_end_matches(';')
+                                .to_string() + "[" + &curr_wire.to_string() + "]",
+                            );
+                        }
+                    } else {
+                        println!("Error: Invalid number format.");
+                    }
+                } else {
+                    println!("Error: '[' and/or ':' not found in the string.");
+                }
+            } 
+            else {
                 output_ports.insert(
                     line.split(' ')
                         .nth(1)
@@ -152,13 +127,13 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                 .trim_start_matches('_')
                 .trim_end_matches('_')
                 .to_string();
-            if output_ports.contains(&output.split('[').next().unwrap().to_string()) {
+            if output_ports.contains(&output) {
                 wire_to_port.insert(input.clone(), output.clone());
             }
             assign_dict.insert(output, input);
         }
     }
-    println!("wire_to_port: {:?}", &wire_to_port);
+    // println!("wire_to_port: {:?}", &wire_to_port);
     postprocess_assign_dict(&mut assign_dict, wire_to_port, output_ports);
     assign_dict
 }
@@ -408,6 +383,18 @@ fn convert_verilog(
         out_writer
             .write_all(("  ".to_owned() + &gate + "\n").as_bytes())
             .expect("Failed to write line");
+    }
+
+    // Check for direct Input -> Output connections
+    let mut buf_idx = 0;
+    for (in_wire, out_wire) in wire_dict.iter() {
+        if inputs.contains(in_wire) && outputs.contains(out_wire) {
+            out_writer
+                .write_all(("  buf b_".to_owned() + &buf_idx.to_string()
+                           + "_(" + &in_wire + ", " 
+                           + &out_wire + ");\n").as_bytes())
+                .expect("Failed to write line");
+        }
     }
 
     out_writer
