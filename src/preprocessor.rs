@@ -153,7 +153,7 @@ fn convert_verilog(
     let mut gates = Vec::new();
     let mut lut_id = 1;
     let supported_gates = vec![
-        "AND", "DFF", "MUX", "NAND", "NOR", "NOT", "OR", "XOR", "XNOR",
+        "AND", "DFF", "MUX", "NAND", "NOR", "NOT", "OR", "XOR", "XNOR", "lut",
     ];
 
     let mut lines = reader.lines();
@@ -162,7 +162,7 @@ fn convert_verilog(
         if line.is_none() {
             break;
         }
-        let line = line
+        let mut line = line
             .expect("Failed to read line")
             .unwrap()
             .trim()
@@ -282,50 +282,129 @@ fn convert_verilog(
                 // If it's a gate
                 if supported_gates.iter().any(|gate| line.contains(gate)) {
                     let is_dff = line.contains("DFF");
-                    let mut gate_line = tokens[0][3..tokens[0].len() - 1].to_lowercase();
-                    if is_dff {
-                        gate_line.truncate(gate_line.len() - 4);
-                        lines.next();
-                    }
-                    gate_line += &(" g".to_owned() + tokens[1] + "(");
-                    // Continue reading all inputs until you find a ');'
-                    loop {
-                        let line = lines.next();
-                        if line.is_none() {
-                            break;
-                        }
-                        let line = line
-                            .expect("Failed to read line")
-                            .unwrap()
-                            .trim()
-                            .to_owned();
-                        if line.starts_with(");") {
-                            break;
-                        } else {
-                            let mut wire_name = line
-                                [line.find('(').unwrap() + 1..line.find(')').unwrap()]
-                                .trim_start_matches('_')
-                                .trim_end_matches('_');
-
-                            while wire_dict.contains_key(wire_name) {
-                                wire_name = &wire_dict[wire_name];
-                                if outputs.contains(&wire_name.to_string()) {
-                                    break;
+                    let is_lut = line.contains("lut");
+                    if is_lut {
+                        let mut lut_line = "lut ".to_owned();
+                        lut_line += "lut_gate";
+                        lut_line += &lut_id.to_string();
+                        lut_line += "(";
+                        lut_id += 1;
+                        while !line.contains(");") {
+                            if line.contains(".LUT(") {
+                                if line.contains('h') {
+                                    lut_line += "0x";
                                 }
+                                let mut extracted_lut_const = String::new();
+                                if let Some(index_h) = line.find('h') {
+                                    if let Some(index_close_paren) = line.find(')') {
+                                        let index_separator = index_h;
+                                        let value = &line[index_separator + 1..index_close_paren];
+                                        extracted_lut_const = value.to_string();
+                                    }
+                                } else if let Some(index_d) = line.find('d') {
+                                    if let Some(index_close_paren) = line.find(')') {
+                                        let index_separator = index_d;
+                                        let value = &line[index_separator + 1..index_close_paren];
+                                        extracted_lut_const = value.to_string();
+                                    }
+                                }
+                                if !extracted_lut_const.is_empty() {
+                                    lut_line += &extracted_lut_const;
+                                } else {
+                                    println!("WARNING: No constant for LUT");
+                                }
+                                lut_line += ", ";                            
+                            } else if line.contains(".A(") {
+                                let mut start_idx;
+                                let mut end_idx;
+                                if !line.contains("{") { // single val
+                                    start_idx = line.find("(").unwrap_or(0) + 1;
+                                    end_idx = line.find(")").unwrap_or(0);
+                                } else {
+                                    start_idx = line.find("{").unwrap_or(0) + 1;
+                                    end_idx = line.find("}").unwrap_or(0);
+                                }
+                                let mut in_vals_vec = Vec::new();
+                                let in_vals = &line[start_idx..end_idx];
+                                in_vals_vec = in_vals
+                                    .split(',')
+                                    .map(|v| v.trim().replace("_", "").to_string())
+                                    .collect();
+                                for in_val in &in_vals_vec {
+                                    let mut tmp_name = in_val;
+                                    while wire_dict.contains_key(tmp_name) {
+                                        tmp_name = &wire_dict[tmp_name];
+                                        if outputs.contains(&tmp_name.to_string()) {
+                                            break;
+                                        }
+                                    }
+                                    lut_line += &tmp_name;
+                                    lut_line += ", ";
+                                }
+                            } else if line.contains(".Y(") {
+                                let start_idx = line.find("(").unwrap_or(0) + 1;
+                                let end_idx = line.find(")").unwrap_or(0);
+                                let out_value_str = &line[start_idx..end_idx];
+                                let mut out_value = &out_value_str.trim().replace("_", "").to_string();
+                                while wire_dict.contains_key(out_value) {
+                                    out_value = &wire_dict[out_value];
+                                    if outputs.contains(&out_value.to_string()) {
+                                        break;
+                                    }
+                                }
+                                lut_line += &out_value;
+                                lut_line += ");";
                             }
-                            gate_line += wire_name;
-                            gate_line += ", ";
+                            let some_line = lines.next();
+                            line = some_line.expect("Failed to read line").unwrap().trim().to_owned();
                         }
+                        gates.push(lut_line.to_string());
+                    } else {
+                        let mut gate_line = tokens[0][3..tokens[0].len() - 1].to_lowercase();
+                        if is_dff {
+                            gate_line.truncate(gate_line.len() - 4);
+                            lines.next();
+                        }
+                        gate_line += &(" g".to_owned() + tokens[1] + "(");
+                        // Continue reading all inputs until you find a ');'
+                        loop {
+                            let line = lines.next();
+                            if line.is_none() {
+                                break;
+                            }
+                            let line = line
+                                .expect("Failed to read line")
+                                .unwrap()
+                                .trim()
+                                .to_owned();
+                            if line.starts_with(");") {
+                                break;
+                            } else {
+                                let mut wire_name = line
+                                    [line.find('(').unwrap() + 1..line.find(')').unwrap()]
+                                    .trim_start_matches('_')
+                                    .trim_end_matches('_');
+
+                                while wire_dict.contains_key(wire_name) {
+                                    wire_name = &wire_dict[wire_name];
+                                    if outputs.contains(&wire_name.to_string()) {
+                                        break;
+                                    }
+                                }
+                                gate_line += wire_name;
+                                gate_line += ", ";
+                            }
+                        }
+                        gate_line.pop();
+                        gate_line.pop();
+                        if is_dff {
+                            let mut parts: Vec<&str> = gate_line.split(',').collect();
+                            parts.pop(); // remove the last element from the vector
+                            gate_line = parts.join(","); // join the remaining elements with commas
+                        }
+                        gate_line += ");";
+                        gates.push(gate_line.to_string());
                     }
-                    gate_line.pop();
-                    gate_line.pop();
-                    if is_dff {
-                        let mut parts: Vec<&str> = gate_line.split(',').collect();
-                        parts.pop(); // remove the last element from the vector
-                        gate_line = parts.join(","); // join the remaining elements with commas
-                    }
-                    gate_line += ");";
-                    gates.push(gate_line.to_string());
                 } else if line.starts_with("module") {
                     // module or end_module
                     out_writer
