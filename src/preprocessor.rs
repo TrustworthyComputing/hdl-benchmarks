@@ -43,8 +43,6 @@ fn parse_args() -> (String, String) {
     (in_file_name, out_file_name)
 }
 
-// TODO: If an Input -> Output entry exists after this function, need to create
-// a buffer gate or maybe add a FF
 fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>, wire_to_port: HashMap<String, String>, output_ports: HashSet<String>) {
     let mut keys_to_modify = Vec::new();
     let mut wire_to_port_map : HashMap<String, String> = HashMap::new();
@@ -133,7 +131,6 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
             assign_dict.insert(output, input);
         }
     }
-    // println!("wire_to_port: {:?}", &wire_to_port);
     postprocess_assign_dict(&mut assign_dict, wire_to_port, output_ports);
     assign_dict
 }
@@ -305,16 +302,18 @@ fn convert_verilog(
                         if line.starts_with(");") {
                             break;
                         } else {
-                            let wire_name = line
+                            let mut wire_name = line
                                 [line.find('(').unwrap() + 1..line.find(')').unwrap()]
                                 .trim_start_matches('_')
                                 .trim_end_matches('_');
 
-                            if wire_dict.contains_key(wire_name) {
-                                gate_line += &wire_dict[wire_name];
-                            } else {
-                                gate_line += wire_name;
+                            while wire_dict.contains_key(wire_name) {
+                                wire_name = &wire_dict[wire_name];
+                                if outputs.contains(&wire_name.to_string()) {
+                                    break;
+                                }
                             }
+                            gate_line += wire_name;
                             gate_line += ", ";
                         }
                     }
@@ -385,7 +384,7 @@ fn convert_verilog(
             .expect("Failed to write line");
     }
 
-    // Check for direct Input -> Output connections
+    // Check for direct Input -> Output connections and constants
     let mut buf_idx = 0;
     for (in_wire, out_wire) in wire_dict.iter() {
         if inputs.contains(in_wire) && outputs.contains(out_wire) {
@@ -394,6 +393,22 @@ fn convert_verilog(
                            + "_(" + &in_wire + ", " 
                            + &out_wire + ");\n").as_bytes())
                 .expect("Failed to write line");
+            buf_idx += 1;
+        }
+        else if out_wire.contains("'h") {
+            if out_wire.contains("0") {
+                out_writer
+                    .write_all(("  czero b_".to_owned() + &buf_idx.to_string()
+                              + "_(" + &in_wire + ");\n").as_bytes())
+                    .expect("Failed to write line");
+            }
+            else {
+                out_writer
+                    .write_all(("  cone b_".to_owned() + &buf_idx.to_string()
+                              + "_(" + &in_wire + ");\n").as_bytes())
+                    .expect("Failed to write line");
+            }
+            buf_idx += 1;
         }
     }
 
