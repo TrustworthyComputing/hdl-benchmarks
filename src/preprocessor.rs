@@ -113,7 +113,7 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                         .to_string(),
                 );
             }
-        } else if line.contains("assign") && !line.contains(">>") {
+        } else if line.contains("assign") && !line.contains(">>") && !line.contains("*") && !line.contains("-") && !line.contains("+") {
             let tokens: Vec<&str> = line.split(' ').collect();
             let output = tokens[1]
                 .trim_end_matches(';')
@@ -275,6 +275,28 @@ fn convert_verilog(
                         }
                     }
                     gates.push(lut_line.to_string());
+                }
+                else if line.contains("+") || line.contains("*") || line.contains("-") {
+                    let mut arith_line = "".to_owned();
+                    if tokens[4] == "+" {
+                        arith_line += "add a";
+                    }
+                    else if tokens[4] == "-" {
+                        arith_line += "sub s";
+                    }
+                    else if tokens[4] == "*" {
+                        arith_line += "mult m";
+                    }
+                    arith_line += &lut_id.to_string();
+                    lut_id += 1;
+                    arith_line += "(";
+                    arith_line += tokens[3];
+                    arith_line += ", ";
+                    arith_line += tokens[5].trim_end_matches(';');
+                    arith_line += ", ";
+                    arith_line += tokens[1];
+                    arith_line += ");";
+                    gates.push(arith_line.to_string());
                 }
             }
             _ => {
