@@ -43,9 +43,12 @@ fn parse_args() -> (String, String) {
     (in_file_name, out_file_name)
 }
 
-fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>, wire_to_port: HashMap<String, String>, output_ports: HashSet<String>) {
+fn postprocess_assign_dict(
+    assign_dict: &mut HashMap<String, String>,
+    wire_to_port: HashMap<String, String>,
+) {
     let mut keys_to_modify = Vec::new();
-    let mut wire_to_port_map : HashMap<String, String> = HashMap::new();
+    let mut wire_to_port_map: HashMap<String, String> = HashMap::new();
     for (key, value) in assign_dict.iter() {
         let is_port = wire_to_port.contains_key(value);
         if assign_dict.contains_key(value) || is_port {
@@ -69,8 +72,8 @@ fn postprocess_assign_dict(assign_dict: &mut HashMap<String, String>, wire_to_po
 fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
     let in_file = File::open(in_file_name).expect("Failed to open file");
     let reader = BufReader::new(in_file);
-    let mut assign_dict : HashMap<String, String> = HashMap::new();
-    let mut wire_to_port : HashMap<String, String> = HashMap::new();
+    let mut assign_dict: HashMap<String, String> = HashMap::new();
+    let mut wire_to_port: HashMap<String, String> = HashMap::new();
     let mut output_ports = HashSet::new();
     for line in reader.lines() {
         let line = line.expect("Failed to read line").trim().to_owned();
@@ -88,13 +91,16 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
 
                     // Parse the substring to an integer
                     if let Ok(number) = number_str.parse::<i32>() {
-                        for curr_wire in 0..number+1 {
+                        for curr_wire in 0..number + 1 {
                             output_ports.insert(
                                 line.split(' ')
-                                .nth(2)
-                                .unwrap()
-                                .trim_end_matches(';')
-                                .to_string() + "[" + &curr_wire.to_string() + "]",
+                                    .nth(2)
+                                    .unwrap()
+                                    .trim_end_matches(';')
+                                    .to_string()
+                                    + "["
+                                    + &curr_wire.to_string()
+                                    + "]",
                             );
                         }
                     } else {
@@ -103,8 +109,7 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                 } else {
                     println!("Error: '[' and/or ':' not found in the string.");
                 }
-            } 
-            else {
+            } else {
                 output_ports.insert(
                     line.split(' ')
                         .nth(1)
@@ -113,14 +118,19 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                         .to_string(),
                 );
             }
-        } else if line.contains("assign") && !line.contains(">>") && !line.contains("*") && !line.contains("-") && !line.contains("+") {
+        } else if line.contains("assign")
+            && !line.contains(">>")
+            && !line.contains('*')
+            && !line.contains('-')
+            && !line.contains('+')
+        {
             let tokens: Vec<&str> = line.split(' ').collect();
             let output = tokens[1]
                 .trim_end_matches(';')
                 .trim_start_matches('_')
                 .trim_end_matches('_')
                 .to_string();
-            let mut input = tokens[3]
+            let input = tokens[3]
                 .trim_end_matches(';')
                 .trim_start_matches('_')
                 .trim_end_matches('_')
@@ -131,7 +141,7 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
             assign_dict.insert(output, input);
         }
     }
-    postprocess_assign_dict(&mut assign_dict, wire_to_port, output_ports);
+    postprocess_assign_dict(&mut assign_dict, wire_to_port);
     assign_dict
 }
 
@@ -182,12 +192,14 @@ fn convert_verilog(
         match tokens[0] {
             "wire" => {
                 for token in tokens.iter().skip(1) {
+                    if token.contains('[') {
+                        continue;
+                    }
                     wires.push(String::from(
                         token
                             .trim_matches(',')
-                            .trim_end_matches(';')
-                            .trim_start_matches('_')
-                            .trim_end_matches('_'),
+                            .trim_matches('_')
+                            .trim_end_matches(';'),
                     ));
                 }
             }
@@ -227,11 +239,12 @@ fn convert_verilog(
                     lut_line += ", ";
                     let mut curr_token = tokens[4];
                     let mut token_idx = 4;
-                    if !line.contains("}") { // 1 input LUT
+                    if !line.contains('}') {
+                        // 1 input LUT
                         curr_token = tokens[5];
                         curr_token = curr_token.trim_start_matches('_').trim_end_matches(';');
                         curr_token = curr_token.trim_end_matches('_');
-                        
+
                         if wire_dict.contains_key(curr_token) {
                             lut_line += &wire_dict[curr_token];
                         } else {
@@ -246,11 +259,11 @@ fn convert_verilog(
                             lut_line += curr_token;
                         }
                         lut_line += ");";
-                    }
-                    else {
+                    } else {
                         loop {
                             if !curr_token.contains(">>") && !curr_token.contains('{') {
-                                curr_token = curr_token.trim_start_matches('_').trim_end_matches(',');
+                                curr_token =
+                                    curr_token.trim_start_matches('_').trim_end_matches(',');
                                 curr_token = curr_token.trim_end_matches('_');
                                 if wire_dict.contains_key(curr_token) {
                                     lut_line += &wire_dict[curr_token];
@@ -263,7 +276,8 @@ fn convert_verilog(
                             curr_token = tokens[token_idx];
                             if curr_token.contains("};") {
                                 // end of lut statement
-                                curr_token = tokens[1].trim_start_matches('_').trim_end_matches('_');
+                                curr_token =
+                                    tokens[1].trim_start_matches('_').trim_end_matches('_');
                                 if wire_dict.contains_key(curr_token) {
                                     lut_line += &wire_dict[curr_token];
                                 } else {
@@ -275,16 +289,13 @@ fn convert_verilog(
                         }
                     }
                     gates.push(lut_line.to_string());
-                }
-                else if line.contains("+") || line.contains("*") || line.contains("-") {
+                } else if line.contains('+') || line.contains('*') || line.contains('-') {
                     let mut arith_line = "".to_owned();
                     if tokens[4] == "+" {
                         arith_line += "add a";
-                    }
-                    else if tokens[4] == "-" {
+                    } else if tokens[4] == "-" {
                         arith_line += "sub s";
-                    }
-                    else if tokens[4] == "*" {
+                    } else if tokens[4] == "*" {
                         arith_line += "mult m";
                     }
                     arith_line += &lut_id.to_string();
@@ -320,14 +331,16 @@ fn convert_verilog(
                                 if let Some(index_h) = line.find('h') {
                                     if let Some(index_close_paren) = line.find(')') {
                                         let index_separator = index_h;
-                                        let value = &line[index_separator + 1..index_close_paren];
-                                        extracted_lut_const = value.to_string();
+                                        extracted_lut_const = line
+                                            [index_separator + 1..index_close_paren]
+                                            .to_string();
                                     }
                                 } else if let Some(index_d) = line.find('d') {
                                     if let Some(index_close_paren) = line.find(')') {
                                         let index_separator = index_d;
-                                        let value = &line[index_separator + 1..index_close_paren];
-                                        extracted_lut_const = value.to_string();
+                                        extracted_lut_const = line
+                                            [index_separator + 1..index_close_paren]
+                                            .to_string();
                                     }
                                 }
                                 if !extracted_lut_const.is_empty() {
@@ -335,24 +348,27 @@ fn convert_verilog(
                                 } else {
                                     println!("WARNING: No constant for LUT");
                                 }
-                                lut_line += ", ";                            
+                                lut_line += ", ";
                             } else if line.contains(".A(") {
-                                let mut start_idx;
-                                let mut end_idx;
-                                if !line.contains("{") { // single val
-                                    start_idx = line.find("(").unwrap_or(0) + 1;
-                                    end_idx = line.find(")").unwrap_or(0);
-                                } else {
-                                    start_idx = line.find("{").unwrap_or(0) + 1;
-                                    end_idx = line.find("}").unwrap_or(0);
-                                }
-                                let mut in_vals_vec = Vec::new();
-                                let in_vals = &line[start_idx..end_idx];
-                                in_vals_vec = in_vals
+                                let (start_idx, end_idx) = {
+                                    if !line.contains('{') {
+                                        // single val
+                                        (
+                                            line.find('(').unwrap_or(0) + 1,
+                                            line.find(')').unwrap_or(0),
+                                        )
+                                    } else {
+                                        (
+                                            line.find('{').unwrap_or(0) + 1,
+                                            line.find('}').unwrap_or(0),
+                                        )
+                                    }
+                                };
+                                let in_vals_vec = &line[start_idx..end_idx]
                                     .split(',')
-                                    .map(|v| v.trim().replace("_", "").to_string())
-                                    .collect();
-                                for in_val in &in_vals_vec {
+                                    .map(|v| v.trim().replace('_', ""))
+                                    .collect::<Vec<String>>();
+                                for in_val in in_vals_vec {
                                     let mut tmp_name = in_val;
                                     while wire_dict.contains_key(tmp_name) {
                                         tmp_name = &wire_dict[tmp_name];
@@ -360,25 +376,29 @@ fn convert_verilog(
                                             break;
                                         }
                                     }
-                                    lut_line += &tmp_name;
+                                    lut_line += tmp_name;
                                     lut_line += ", ";
                                 }
                             } else if line.contains(".Y(") {
-                                let start_idx = line.find("(").unwrap_or(0) + 1;
-                                let end_idx = line.find(")").unwrap_or(0);
+                                let start_idx = line.find('(').unwrap_or(0) + 1;
+                                let end_idx = line.find(')').unwrap_or(0);
                                 let out_value_str = &line[start_idx..end_idx];
-                                let mut out_value = &out_value_str.trim().replace("_", "").to_string();
+                                let mut out_value = &out_value_str.trim().replace('_', "");
                                 while wire_dict.contains_key(out_value) {
                                     out_value = &wire_dict[out_value];
                                     if outputs.contains(&out_value.to_string()) {
                                         break;
                                     }
                                 }
-                                lut_line += &out_value;
+                                lut_line += out_value;
                                 lut_line += ");";
                             }
-                            let some_line = lines.next();
-                            line = some_line.expect("Failed to read line").unwrap().trim().to_owned();
+                            line = lines
+                                .next()
+                                .expect("Failed to read line")
+                                .unwrap()
+                                .trim()
+                                .to_owned();
                         }
                         gates.push(lut_line.to_string());
                     } else {
@@ -490,23 +510,32 @@ fn convert_verilog(
     for (in_wire, out_wire) in wire_dict.iter() {
         if inputs.contains(in_wire) && outputs.contains(out_wire) {
             out_writer
-                .write_all(("  buf b_".to_owned() + &buf_idx.to_string()
-                           + "_(" + &in_wire + ", " 
-                           + &out_wire + ");\n").as_bytes())
+                .write_all(
+                    ("  buf b_".to_owned()
+                        + &buf_idx.to_string()
+                        + "_("
+                        + in_wire
+                        + ", "
+                        + out_wire
+                        + ");\n")
+                        .as_bytes(),
+                )
                 .expect("Failed to write line");
             buf_idx += 1;
-        }
-        else if out_wire.contains("'h") {
-            if out_wire.contains("0") {
+        } else if out_wire.contains("'h") {
+            if out_wire.contains('0') {
                 out_writer
-                    .write_all(("  czero b_".to_owned() + &buf_idx.to_string()
-                              + "_(" + &in_wire + ");\n").as_bytes())
+                    .write_all(
+                        ("  czero b_".to_owned() + &buf_idx.to_string() + "_(" + in_wire + ");\n")
+                            .as_bytes(),
+                    )
                     .expect("Failed to write line");
-            }
-            else {
+            } else {
                 out_writer
-                    .write_all(("  cone b_".to_owned() + &buf_idx.to_string()
-                              + "_(" + &in_wire + ");\n").as_bytes())
+                    .write_all(
+                        ("  cone b_".to_owned() + &buf_idx.to_string() + "_(" + in_wire + ");\n")
+                            .as_bytes(),
+                    )
                     .expect("Failed to write line");
             }
             buf_idx += 1;

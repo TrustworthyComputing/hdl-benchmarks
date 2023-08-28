@@ -1,6 +1,6 @@
+use clap::{Arg, Command};
 use std::fs::File;
 use std::io::prelude::*;
-use clap::{Arg, Command};
 
 pub fn generate_adder_nbit(n: usize) -> String {
     let mut verilog = String::new();
@@ -92,12 +92,14 @@ fn main() {
         )
         .get_matches();
 
-    let bits = matches.get_one::<usize>("bits").expect("required").to_owned();
+    let bits = matches
+        .get_one::<usize>("bits")
+        .expect("required")
+        .to_owned();
     let circuit = generate_adder_nbit(bits);
-    
-    let file = File::create(
-        "./processed-netlists/".to_owned() + &bits.to_string() + "-bit-adder.v"
-    );
+
+    let file =
+        File::create("./processed-netlists/".to_owned() + &bits.to_string() + "-bit-adder.v");
 
     match file {
         Ok(mut file) => {
