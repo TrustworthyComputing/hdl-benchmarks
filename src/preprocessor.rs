@@ -120,9 +120,10 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
             }
         } else if line.contains("assign")
             && !line.contains(">>")
-            && !line.contains('*')
-            && !line.contains('-')
             && !line.contains('+')
+            && !line.contains('-')
+            && !line.contains('*')
+            && !line.contains('/')
         {
             let tokens: Vec<&str> = line.split(' ').collect();
             let output = tokens[1]
@@ -289,7 +290,11 @@ fn convert_verilog(
                         }
                     }
                     gates.push(lut_line.to_string());
-                } else if line.contains('+') || line.contains('*') || line.contains('-') {
+                } else if line.contains('+')
+                    || line.contains('*')
+                    || line.contains('-')
+                    || line.contains('/')
+                {
                     let mut arith_line = "".to_owned();
                     if tokens[4] == "+" {
                         arith_line += "add a";
@@ -297,6 +302,8 @@ fn convert_verilog(
                         arith_line += "sub s";
                     } else if tokens[4] == "*" {
                         arith_line += "mult m";
+                    } else if tokens[4] == "/" {
+                        arith_line += "div d";
                     }
                     arith_line += &lut_id.to_string();
                     lut_id += 1;

@@ -7,6 +7,9 @@ license = "MIT"
 
 [dependencies]
 clap = "4.2.2"
+csv = "1.1"
+image = "0.23"
+rand = "0.8"
 
 [[bin]]
 name = "preprocessor"
@@ -15,3 +18,11 @@ path = "src/preprocessor.rs"
 [[bin]]
 name = "generate_adder"
 path = "src/generate_adder.rs"
+
+[[bin]]
+name = "generate_blur_filter"
+path = "src/generate_blur_filter.rs"
+
+[[bin]]
+name = "postprocess_blur_filter"
+path = "src/postprocess_blur_filter.rs"

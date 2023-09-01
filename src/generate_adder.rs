@@ -80,8 +80,8 @@ pub fn generate_adder_nbit(n: usize) -> String {
 }
 
 fn main() {
-    let matches = Command::new("HDL Preprocessor")
-        .about("Preprocess Yosys outputs to cleaner structural Verilog")
+    let matches = Command::new("Generate Adder")
+        .about("Generates a binary adder")
         .arg(
             Arg::new("bits")
                 .long("bits")
