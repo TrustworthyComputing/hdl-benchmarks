@@ -1,10 +1,10 @@
-use clap::{Arg, Command};
+use clap::{Arg, Command, ArgAction};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
-fn parse_args() -> (String, String) {
+fn parse_args() -> (String, String, bool) {
     let matches = Command::new("HDL Preprocessor")
         .about("Preprocess Yosys outputs to cleaner structural Verilog")
         .arg(
@@ -20,6 +20,13 @@ fn parse_args() -> (String, String) {
                 .value_name("FILE")
                 .help("Sets the output file to use")
                 .required(false),
+        )
+        .arg(
+            Arg::new("arithmetic")
+                .long("arithmetic")
+                .help("Toggle arithmetic mode")
+                .required(false)
+                .action(ArgAction::SetTrue),
         )
         .get_matches();
 
@@ -39,8 +46,9 @@ fn parse_args() -> (String, String) {
             out_file_name
         }
     };
+    let arith = matches.get_flag("arithmetic");
 
-    (in_file_name, out_file_name)
+    (in_file_name, out_file_name, arith)
 }
 
 fn postprocess_assign_dict(
@@ -128,13 +136,13 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
             let tokens: Vec<&str> = line.split(' ').collect();
             let output = tokens[1]
                 .trim_end_matches(';')
-                .trim_start_matches('_')
-                .trim_end_matches('_')
+                // .trim_start_matches('_')
+                // .trim_end_matches('_')
                 .to_string();
             let input = tokens[3]
                 .trim_end_matches(';')
-                .trim_start_matches('_')
-                .trim_end_matches('_')
+                // .trim_start_matches('_')
+                // .trim_end_matches('_')
                 .to_string();
             if output_ports.contains(&output) {
                 wire_to_port.insert(input.clone(), output.clone());
@@ -150,6 +158,7 @@ fn convert_verilog(
     in_file_name: &String,
     out_file_name: &String,
     wire_dict: &HashMap<String, String>,
+    arith: bool,
 ) {
     let in_file = File::open(in_file_name).expect("Failed to open file");
     let out_file = File::create(out_file_name).expect("Failed to create file");
@@ -199,7 +208,7 @@ fn convert_verilog(
                     wires.push(String::from(
                         token
                             .trim_matches(',')
-                            .trim_matches('_')
+                            // .trim_matches('_')
                             .trim_end_matches(';'),
                     ));
                 }
@@ -216,6 +225,18 @@ fn convert_verilog(
             "output" => {
                 if line.contains('[') {
                     multi_bit_outputs.push("  ".to_string() + &line.to_string());
+                    if !arith {
+                        // Find the start and end of the number substring
+                        let start_index = line.find('[').unwrap_or(0) + 1;
+                        let end_index = line.find(':').unwrap_or(0);
+                        // Extract the number substring
+                        let number_str = &line[start_index..end_index];
+                        // Convert the substring to a u32
+                        let number: u32 = number_str.parse().unwrap_or(0);
+                        for i in 0..number+1 {
+                            outputs.push(String::from(tokens[2].trim_end_matches(';').to_string() + "[" + &i.to_string() + "]"));
+                        }
+                    }
                 } else {
                     for token in tokens.iter().skip(1) {
                         outputs.push(String::from(token.trim_matches(',').trim_end_matches(';')));
@@ -243,8 +264,8 @@ fn convert_verilog(
                     if !line.contains('}') {
                         // 1 input LUT
                         curr_token = tokens[5];
-                        curr_token = curr_token.trim_start_matches('_').trim_end_matches(';');
-                        curr_token = curr_token.trim_end_matches('_');
+                        curr_token = curr_token.trim_end_matches(';');
+                        // curr_token = curr_token.trim_end_matches('_');
 
                         if wire_dict.contains_key(curr_token) {
                             lut_line += &wire_dict[curr_token];
@@ -253,7 +274,10 @@ fn convert_verilog(
                         }
                         lut_line += ", ";
                         // end of lut statement
-                        curr_token = tokens[1].trim_start_matches('_').trim_end_matches('_');
+                        // curr_token =
+                        // tokens[1].trim_start_matches('_').trim_end_matches('_');
+                        curr_token = tokens[1];
+
                         if wire_dict.contains_key(curr_token) {
                             lut_line += &wire_dict[curr_token];
                         } else {
@@ -263,9 +287,11 @@ fn convert_verilog(
                     } else {
                         loop {
                             if !curr_token.contains(">>") && !curr_token.contains('{') {
+                                // curr_token =
+                                //     curr_token.trim_start_matches('_').trim_end_matches(',');
                                 curr_token =
-                                    curr_token.trim_start_matches('_').trim_end_matches(',');
-                                curr_token = curr_token.trim_end_matches('_');
+                                    curr_token.trim_end_matches(',');
+                                // curr_token = curr_token.trim_end_matches('_');
                                 if wire_dict.contains_key(curr_token) {
                                     lut_line += &wire_dict[curr_token];
                                 } else {
@@ -277,8 +303,10 @@ fn convert_verilog(
                             curr_token = tokens[token_idx];
                             if curr_token.contains("};") {
                                 // end of lut statement
+                                // curr_token =
+                                //     tokens[1].trim_start_matches('_').trim_end_matches('_');
                                 curr_token =
-                                    tokens[1].trim_start_matches('_').trim_end_matches('_');
+                                    tokens[1];
                                 if wire_dict.contains_key(curr_token) {
                                     lut_line += &wire_dict[curr_token];
                                 } else {
@@ -373,7 +401,7 @@ fn convert_verilog(
                                 };
                                 let in_vals_vec = &line[start_idx..end_idx]
                                     .split(',')
-                                    .map(|v| v.trim().replace('_', ""))
+                                    .map(|v| v.trim().replace('_', "_"))
                                     .collect::<Vec<String>>();
                                 for in_val in in_vals_vec {
                                     let mut tmp_name = in_val;
@@ -390,7 +418,7 @@ fn convert_verilog(
                                 let start_idx = line.find('(').unwrap_or(0) + 1;
                                 let end_idx = line.find(')').unwrap_or(0);
                                 let out_value_str = &line[start_idx..end_idx];
-                                let mut out_value = &out_value_str.trim().replace('_', "");
+                                let mut out_value = &out_value_str.trim().replace('_', "_");
                                 while wire_dict.contains_key(out_value) {
                                     out_value = &wire_dict[out_value];
                                     if outputs.contains(&out_value.to_string()) {
@@ -431,8 +459,8 @@ fn convert_verilog(
                             } else {
                                 let mut wire_name = line
                                     [line.find('(').unwrap() + 1..line.find(')').unwrap()]
-                                    .trim_start_matches('_')
-                                    .trim_end_matches('_');
+                                    .trim_end_matches(';');
+
 
                                 while wire_dict.contains_key(wire_name) {
                                     wire_name = &wire_dict[wire_name];
@@ -491,11 +519,13 @@ fn convert_verilog(
 
     // Write outputs
     if !multi_bit_outputs.is_empty() {
-        out_writer
-            .write_all((multi_bit_outputs.join("\n") + "\n").as_bytes())
-            .expect("Failed to write line");
+        if arith {
+            out_writer
+                .write_all((multi_bit_outputs.join("\n") + "\n").as_bytes())
+                .expect("Failed to write line");
+        }
     }
-    if !outputs.is_empty() {
+    if !outputs.is_empty() && !arith {
         out_writer
             .write_all(b"  output ")
             .expect("Failed to write line");
@@ -555,8 +585,8 @@ fn convert_verilog(
 }
 
 fn main() {
-    let (in_file_name, out_file_name) = parse_args();
+    let (in_file_name, out_file_name, arith) = parse_args();
 
     let wire_dict = build_assign_dict(&in_file_name);
-    convert_verilog(&in_file_name, &out_file_name, &wire_dict);
+    convert_verilog(&in_file_name, &out_file_name, &wire_dict, arith);
 }
