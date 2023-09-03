@@ -20,8 +20,12 @@ name = "generate_adder"
 path = "src/generate_adder.rs"
 
 [[bin]]
-name = "generate_blur_filter"
-path = "src/generate_blur_filter.rs"
+name = "generate_box_blur_filter"
+path = "src/generate_box_blur_filter.rs"
+
+[[bin]]
+name = "generate_gaussian_blur_filter"
+path = "src/generate_gaussian_blur_filter.rs"
 
 [[bin]]
 name = "postprocess_blur_filter"
