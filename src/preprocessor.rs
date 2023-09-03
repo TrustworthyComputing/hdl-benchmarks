@@ -244,7 +244,7 @@ fn convert_verilog(
                 }
             }
             "assign" => {
-                if line.contains(">>") {
+                if line.contains(">>") && line.contains("{")  {
                     // LUT
                     let mut lut_line = "lut ".to_owned();
                     lut_line += "lut_gate";
@@ -322,6 +322,8 @@ fn convert_verilog(
                     || line.contains('*')
                     || line.contains('-')
                     || line.contains('/')
+                    || line.contains("<<")
+                    || line.contains(">>")
                 {
                     let mut arith_line = "".to_owned();
                     if tokens[4] == "+" {
@@ -332,6 +334,10 @@ fn convert_verilog(
                         arith_line += "mult m";
                     } else if tokens[4] == "/" {
                         arith_line += "div d";
+                    } else if tokens[4] == "<<" {
+                        arith_line += "shl l";
+                    } else if tokens[4] == ">>" {
+                        arith_line += "shr r";
                     }
                     arith_line += &lut_id.to_string();
                     lut_id += 1;
