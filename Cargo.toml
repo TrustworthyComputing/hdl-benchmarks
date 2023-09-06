@@ -34,3 +34,7 @@ path = "src/postprocess_blur_filter.rs"
 [[bin]]
 name = "generate_mmult"
 path = "src/generate_mmult.rs"
+
+[[bin]]
+name = "generate_euclidean_distance"
+path = "src/generate_euclidean_distance.rs"
