@@ -30,3 +30,7 @@ path = "src/generate_gaussian_blur_filter.rs"
 [[bin]]
 name = "postprocess_blur_filter"
 path = "src/postprocess_blur_filter.rs"
+
+[[bin]]
+name = "generate_mmult"
+path = "src/generate_mmult.rs"

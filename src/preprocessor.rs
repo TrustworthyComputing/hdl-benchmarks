@@ -349,6 +349,16 @@ fn convert_verilog(
                     arith_line += tokens[1];
                     arith_line += ");";
                     gates.push(arith_line.to_string());
+                } else if line.contains('=') && arith {
+                    let mut arith_line = "copy c".to_owned();
+                    arith_line += &lut_id.to_string();
+                    lut_id += 1;
+                    arith_line += "(";
+                    arith_line += tokens[3].trim_end_matches(';');
+                    arith_line += ", ";
+                    arith_line += tokens[1];
+                    arith_line += ");";
+                    gates.push(arith_line.to_string());
                 }
             }
             _ => {
