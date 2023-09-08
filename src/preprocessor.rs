@@ -1,4 +1,4 @@
-use clap::{Arg, Command, ArgAction};
+use clap::{Arg, ArgAction, Command};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -46,9 +46,8 @@ fn parse_args() -> (String, String, bool) {
             out_file_name
         }
     };
-    let arith = matches.get_flag("arithmetic");
 
-    (in_file_name, out_file_name, arith)
+    (in_file_name, out_file_name, matches.get_flag("arithmetic"))
 }
 
 fn postprocess_assign_dict(
@@ -73,19 +72,104 @@ fn postprocess_assign_dict(
         }
     }
     for (key, value) in wire_to_port_map.iter() {
+        if assign_dict.contains_key(key) && assign_dict[key].contains("'h") {
+            assign_dict.insert(value.clone(), assign_dict[key].clone());
+            continue;
+        }
         assign_dict.insert(key.clone(), value.clone());
     }
 }
 
-fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
+fn get_multibit_assign_wires(line: &str) -> (Vec<String>, Vec<String>) {
+    let mut left_side = Vec::new();
+    let mut right_side = Vec::new();
+
+    // Split the line by '='
+    let s = line.replace(&[';', ' ', '{', '}'][..], "");
+    let parts: Vec<&str> = s.split('=').collect();
+
+    assert_eq!(parts.len(), 2);
+
+    // Extract the left and right sides
+    let left = parts[0];
+    let right = parts[1];
+
+    // Split the brace content by commas
+    let wire_names: Vec<&str> = left.split(',').map(|s| s.trim()).collect();
+    for wire_name in wire_names {
+        if let Some(left_bracket) = wire_name.find('[') {
+            if let Some(right_bracket) = wire_name.rfind(']') {
+                let name = &wire_name[0..left_bracket];
+                let range = &wire_name[(left_bracket + 1)..right_bracket];
+                if range.contains(':') {
+                    let (start, end) = parse_range(range);
+                    for i in (end..=start).rev() {
+                        left_side.push(format!("{}[{}]", name, i));
+                    }
+                } else {
+                    left_side.push(wire_name.to_string());
+                }
+            }
+        } else {
+            left_side.push(wire_name.to_string());
+        }
+    }
+
+    // Split the brace content by commas
+    let wire_names_right: Vec<&str> = right.split(',').map(|s| s.trim()).collect();
+    for wire_name in wire_names_right {
+        if let Some(left_bracket) = wire_name.find('[') {
+            if let Some(right_bracket) = wire_name.rfind(']') {
+                let name = &wire_name[0..left_bracket];
+                let range = &wire_name[(left_bracket + 1)..right_bracket];
+                if range.contains(':') {
+                    let (start, end) = parse_range(range);
+                    for i in (end..=start).rev() {
+                        right_side.push(format!("{}[{}]", name, i));
+                    }
+                } else {
+                    right_side.push(wire_name.to_string());
+                }
+            }
+        } else if wire_name.contains("'h") {
+            // foo[1:0] = 2'h0; => foo[1], foo[0] = 1'h0, 1'h0;
+            let wire_name_split: Vec<&str> = wire_name.split('\'').collect();
+            let bit_len = wire_name_split[0].parse::<i32>().unwrap_or(0);
+            for _ in 0..bit_len {
+                right_side.push("1'".to_owned() + wire_name_split[1]);
+            }
+        } else {
+            right_side.push(wire_name.to_string());
+        }
+    }
+
+    (left_side, right_side)
+}
+
+fn parse_range(range: &str) -> (i32, i32) {
+    let parts: Vec<&str> = range.split(':').collect();
+    if parts.len() == 2 {
+        if let Ok(start) = parts[0].parse::<i32>() {
+            if let Ok(end) = parts[1].parse::<i32>() {
+                return (start, end);
+            }
+        }
+    }
+
+    (0, 0) // Default range if parsing fails
+}
+
+fn build_assign_dict(
+    in_file_name: &String,
+) -> (HashMap<String, String>, HashMap<String, Vec<String>>) {
     let in_file = File::open(in_file_name).expect("Failed to open file");
     let reader = BufReader::new(in_file);
     let mut assign_dict: HashMap<String, String> = HashMap::new();
     let mut wire_to_port: HashMap<String, String> = HashMap::new();
     let mut output_ports = HashSet::new();
+    let mut leftover_maps: HashMap<String, Vec<String>> = HashMap::new();
     for line in reader.lines() {
         let line = line.expect("Failed to read line").trim().to_owned();
-
         if line.contains("output") {
             if line.contains('[') {
                 // Find the positions of '[' and ':'
@@ -96,7 +180,6 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
                 if let (Some(open_bracket), Some(colon)) = (open_bracket_pos, colon_pos) {
                     // Extract the substring between '[' and ':'
                     let number_str = &line[open_bracket + 1..colon];
-
                     // Parse the substring to an integer
                     if let Ok(number) = number_str.parse::<i32>() {
                         for curr_wire in 0..number + 1 {
@@ -133,31 +216,89 @@ fn build_assign_dict(in_file_name: &String) -> HashMap<String, String> {
             && !line.contains('*')
             && !line.contains('/')
         {
-            let tokens: Vec<&str> = line.split(' ').collect();
-            let output = tokens[1]
-                .trim_end_matches(';')
-                // .trim_start_matches('_')
-                // .trim_end_matches('_')
-                .to_string();
-            let input = tokens[3]
-                .trim_end_matches(';')
-                // .trim_start_matches('_')
-                // .trim_end_matches('_')
-                .to_string();
-            if output_ports.contains(&output) {
-                wire_to_port.insert(input.clone(), output.clone());
+            // assign dest = source;
+            // assign dest[WIRE_ID] = source;
+            // assign dest [WIRE_ID] = source;
+            // assign dest = source [WIRE_ID];
+            // assign dest = source[WIRE_ID];
+            // assign dest [WIRE_ID] = source [WIRE_ID];
+            // assign dest [WIRE_ID] = source[WIRE_ID];
+            // assign dest[WIRE_ID] = source [WIRE_ID];
+            // assign dest[WIRE_ID] = source[WIRE_ID];
+
+            let cleaned_line: String = line.replace("assign", "").replace([';', ' '], "");
+
+            // multi-bit assign
+            if line.contains(':') || line.contains('{') {
+                let (left, right) = get_multibit_assign_wires(&cleaned_line);
+                assert_eq!(
+                    left.len(),
+                    right.len(),
+                    "assign statement LHS is not the same size as RHS!"
+                );
+                for i in 0..left.len() {
+                    let output = left[i].clone();
+                    let input = right[i].clone();
+
+                    if output_ports.contains(&output) {
+                        if wire_to_port.contains_key(&input) {
+                            leftover_maps
+                                .entry(input.clone())
+                                .or_insert(Vec::new())
+                                .push(output.clone());
+                        } else {
+                            wire_to_port.insert(input.clone(), output.clone());
+                        }
+                    }
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        assign_dict.entry(output.clone())
+                    {
+                        e.insert(input);
+                    } else {
+                        leftover_maps
+                            .entry(output.clone())
+                            .or_insert(Vec::new())
+                            .push(input.clone());
+                    }
+                }
+            } else {
+                // single-bit assign
+                let tokens: Vec<&str> = cleaned_line.split('=').collect();
+                let output = tokens[0].to_string();
+                let input = tokens[1].to_string();
+                if output_ports.contains(&output) {
+                    if wire_to_port.contains_key(&input) {
+                        leftover_maps
+                            .entry(input.clone())
+                            .or_insert(Vec::new())
+                            .push(output.clone());
+                    } else {
+                        wire_to_port.insert(input.clone(), output.clone());
+                    }
+                }
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    assign_dict.entry(output.clone())
+                {
+                    e.insert(input);
+                } else {
+                    leftover_maps
+                        .entry(output.clone())
+                        .or_insert(Vec::new())
+                        .push(input.clone());
+                }
             }
-            assign_dict.insert(output, input);
         }
     }
+
     postprocess_assign_dict(&mut assign_dict, wire_to_port);
-    assign_dict
+    (assign_dict, leftover_maps)
 }
 
 fn convert_verilog(
     in_file_name: &String,
     out_file_name: &String,
     wire_dict: &HashMap<String, String>,
+    leftover_dict: &HashMap<String, Vec<String>>,
     arith: bool,
 ) {
     let in_file = File::open(in_file_name).expect("Failed to open file");
@@ -172,7 +313,7 @@ fn convert_verilog(
     let mut multi_bit_outputs = Vec::new();
     let mut gates = Vec::new();
     let mut lut_id = 1;
-    let supported_gates = vec![
+    let supported_gates = [
         "AND", "DFF", "MUX", "NAND", "NOR", "NOT", "OR", "XOR", "XNOR", "lut",
     ];
 
@@ -216,6 +357,23 @@ fn convert_verilog(
             "input" => {
                 if line.contains('[') {
                     multi_bit_inputs.push("  ".to_string() + &line.to_string());
+                    if !arith {
+                        // Find the start and end of the number substring
+                        let start_index = line.find('[').unwrap_or(0) + 1;
+                        let end_index = line.find(':').unwrap_or(0);
+                        // Extract the number substring
+                        let number_str = &line[start_index..end_index];
+                        // Convert the substring to a u32
+                        let number: u32 = number_str.parse().unwrap_or(0);
+                        for i in 0..number + 1 {
+                            inputs.push(
+                                tokens[2].trim_end_matches(';').to_string()
+                                    + "["
+                                    + &i.to_string()
+                                    + "]",
+                            );
+                        }
+                    }
                 } else {
                     for token in tokens.iter().skip(1) {
                         inputs.push(String::from(token.trim_matches(',').trim_end_matches(';')));
@@ -233,8 +391,13 @@ fn convert_verilog(
                         let number_str = &line[start_index..end_index];
                         // Convert the substring to a u32
                         let number: u32 = number_str.parse().unwrap_or(0);
-                        for i in 0..number+1 {
-                            outputs.push(String::from(tokens[2].trim_end_matches(';').to_string() + "[" + &i.to_string() + "]"));
+                        for i in 0..number + 1 {
+                            outputs.push(
+                                tokens[2].trim_end_matches(';').to_string()
+                                    + "["
+                                    + &i.to_string()
+                                    + "]",
+                            );
                         }
                     }
                 } else {
@@ -244,7 +407,7 @@ fn convert_verilog(
                 }
             }
             "assign" => {
-                if line.contains(">>") && line.contains("{")  {
+                if line.contains(">>") && line.contains('{') {
                     // LUT
                     let mut lut_line = "lut ".to_owned();
                     lut_line += "lut_gate";
@@ -265,7 +428,6 @@ fn convert_verilog(
                         // 1 input LUT
                         curr_token = tokens[5];
                         curr_token = curr_token.trim_end_matches(';');
-                        // curr_token = curr_token.trim_end_matches('_');
 
                         if wire_dict.contains_key(curr_token) {
                             lut_line += &wire_dict[curr_token];
@@ -274,8 +436,6 @@ fn convert_verilog(
                         }
                         lut_line += ", ";
                         // end of lut statement
-                        // curr_token =
-                        // tokens[1].trim_start_matches('_').trim_end_matches('_');
                         curr_token = tokens[1];
 
                         if wire_dict.contains_key(curr_token) {
@@ -287,11 +447,7 @@ fn convert_verilog(
                     } else {
                         loop {
                             if !curr_token.contains(">>") && !curr_token.contains('{') {
-                                // curr_token =
-                                //     curr_token.trim_start_matches('_').trim_end_matches(',');
-                                curr_token =
-                                    curr_token.trim_end_matches(',');
-                                // curr_token = curr_token.trim_end_matches('_');
+                                curr_token = curr_token.trim_end_matches(',');
                                 if wire_dict.contains_key(curr_token) {
                                     lut_line += &wire_dict[curr_token];
                                 } else {
@@ -303,10 +459,7 @@ fn convert_verilog(
                             curr_token = tokens[token_idx];
                             if curr_token.contains("};") {
                                 // end of lut statement
-                                // curr_token =
-                                //     tokens[1].trim_start_matches('_').trim_end_matches('_');
-                                curr_token =
-                                    tokens[1];
+                                curr_token = tokens[1];
                                 if wire_dict.contains_key(curr_token) {
                                     lut_line += &wire_dict[curr_token];
                                 } else {
@@ -415,26 +568,27 @@ fn convert_verilog(
                                         )
                                     }
                                 };
-                                let in_vals_vec = &line[start_idx..end_idx]
+                                let in_vals_vec: Vec<String> = line[start_idx..end_idx]
                                     .split(',')
-                                    .map(|v| v.trim().replace('_', "_"))
-                                    .collect::<Vec<String>>();
+                                    .map(|v| v.trim().to_string())
+                                    .collect();
+
                                 for in_val in in_vals_vec {
                                     let mut tmp_name = in_val;
-                                    while wire_dict.contains_key(tmp_name) {
-                                        tmp_name = &wire_dict[tmp_name];
+                                    while wire_dict.contains_key(&tmp_name) {
+                                        tmp_name = wire_dict[&tmp_name].to_string();
                                         if outputs.contains(&tmp_name.to_string()) {
                                             break;
                                         }
                                     }
-                                    lut_line += tmp_name;
+                                    lut_line += tmp_name.as_str();
                                     lut_line += ", ";
                                 }
                             } else if line.contains(".Y(") {
                                 let start_idx = line.find('(').unwrap_or(0) + 1;
                                 let end_idx = line.find(')').unwrap_or(0);
                                 let out_value_str = &line[start_idx..end_idx];
-                                let mut out_value = &out_value_str.trim().replace('_', "_");
+                                let mut out_value = &out_value_str.trim().to_string();
                                 while wire_dict.contains_key(out_value) {
                                     out_value = &wire_dict[out_value];
                                     if outputs.contains(&out_value.to_string()) {
@@ -476,7 +630,6 @@ fn convert_verilog(
                                 let mut wire_name = line
                                     [line.find('(').unwrap() + 1..line.find(')').unwrap()]
                                     .trim_end_matches(';');
-
 
                                 while wire_dict.contains_key(wire_name) {
                                     wire_name = &wire_dict[wire_name];
@@ -534,12 +687,10 @@ fn convert_verilog(
     }
 
     // Write outputs
-    if !multi_bit_outputs.is_empty() {
-        if arith {
-            out_writer
-                .write_all((multi_bit_outputs.join("\n") + "\n").as_bytes())
-                .expect("Failed to write line");
-        }
+    if !multi_bit_outputs.is_empty() && arith {
+        out_writer
+            .write_all((multi_bit_outputs.join("\n") + "\n").as_bytes())
+            .expect("Failed to write line");
     }
     if !outputs.is_empty() && !arith {
         out_writer
@@ -560,6 +711,50 @@ fn convert_verilog(
 
     // Check for direct Input -> Output connections and constants
     let mut buf_idx = 0;
+    for (in_wire, out_wire_vec) in leftover_dict.iter() {
+        for out_wire in out_wire_vec {
+            if inputs.contains(in_wire) && outputs.contains(out_wire) {
+                out_writer
+                    .write_all(
+                        ("  buf b_".to_owned()
+                            + &buf_idx.to_string()
+                            + "_("
+                            + in_wire
+                            + ", "
+                            + out_wire
+                            + ");\n")
+                            .as_bytes(),
+                    )
+                    .expect("Failed to write line");
+                buf_idx += 1;
+            } else if in_wire.contains("'h") {
+                if in_wire.contains('0') {
+                    out_writer
+                        .write_all(
+                            ("  czero b_".to_owned()
+                                + &buf_idx.to_string()
+                                + "_("
+                                + out_wire
+                                + ");\n")
+                                .as_bytes(),
+                        )
+                        .expect("Failed to write line");
+                } else {
+                    out_writer
+                        .write_all(
+                            ("  cone b_".to_owned()
+                                + &buf_idx.to_string()
+                                + "_("
+                                + out_wire
+                                + ");\n")
+                                .as_bytes(),
+                        )
+                        .expect("Failed to write line");
+                }
+                buf_idx += 1;
+            }
+        }
+    }
     for (in_wire, out_wire) in wire_dict.iter() {
         if inputs.contains(in_wire) && outputs.contains(out_wire) {
             out_writer
@@ -592,6 +787,23 @@ fn convert_verilog(
                     .expect("Failed to write line");
             }
             buf_idx += 1;
+        } else if in_wire.contains("'h") {
+            if in_wire.contains('0') {
+                out_writer
+                    .write_all(
+                        ("  czero b_".to_owned() + &buf_idx.to_string() + "_(" + out_wire + ");\n")
+                            .as_bytes(),
+                    )
+                    .expect("Failed to write line");
+            } else {
+                out_writer
+                    .write_all(
+                        ("  cone b_".to_owned() + &buf_idx.to_string() + "_(" + out_wire + ");\n")
+                            .as_bytes(),
+                    )
+                    .expect("Failed to write line");
+            }
+            buf_idx += 1;
         }
     }
 
@@ -603,6 +815,100 @@ fn convert_verilog(
 fn main() {
     let (in_file_name, out_file_name, arith) = parse_args();
 
-    let wire_dict = build_assign_dict(&in_file_name);
-    convert_verilog(&in_file_name, &out_file_name, &wire_dict, arith);
+    let (wire_dict, leftover_maps) = build_assign_dict(&in_file_name);
+    convert_verilog(
+        &in_file_name,
+        &out_file_name,
+        &wire_dict,
+        &leftover_maps,
+        arith,
+    );
+}
+
+#[test]
+fn test_get_multibit_assign_wires() {
+    let prompts = vec![
+        "assign alpha[1:0] = { 1'h0, N1[0] };",
+        r#"assign { t [31] , t [ 30 ] , t[ 29] , t[28] , t[27] , t[26] , t[25], t[24] , t[23] ,
+             t[22] , t[21] , t[20] , t[19] , t[18] , t[17], t[16] , t[15] , t[14] , t[13] , t[12] ,
+             t[11] , t[10] , t[9] , t[8] , t[7] , t[6] , t[5] , t[4] , t[3] , t[2] , t[1] , t[0]  } 
+             =  { N0 [ 29 : 0 ], 2'h0 };"#,
+        r#"assign { t[31] , t[30] , t[29] , t[28] , t[27] , t[26] , t[25] , t[24] , t[23] , t[22] ,
+             t[21] , t[20] , t[19] , t[18] , t[17] , t[16] , t[15] , t[14] , t[13] , t[12] , t[11] ,
+              t[10] , t[9] , t[8] , t[7] , t[6] , t[5] , t[4] , t[3] , t[2] , t[1] , t[0]  } = 
+              { 1'hx, beta_3[31:3], 1'h0, N1[0] };"#,
+    ];
+    let left_result = vec![
+        vec!["alpha[1]", "alpha[0]"],
+        vec![
+            "t[31]", "t[30]", "t[29]", "t[28]", "t[27]", "t[26]", "t[25]", "t[24]", "t[23]",
+            "t[22]", "t[21]", "t[20]", "t[19]", "t[18]", "t[17]", "t[16]", "t[15]", "t[14]",
+            "t[13]", "t[12]", "t[11]", "t[10]", "t[9]", "t[8]", "t[7]", "t[6]", "t[5]", "t[4]",
+            "t[3]", "t[2]", "t[1]", "t[0]",
+        ],
+        vec![
+            "t[31]", "t[30]", "t[29]", "t[28]", "t[27]", "t[26]", "t[25]", "t[24]", "t[23]",
+            "t[22]", "t[21]", "t[20]", "t[19]", "t[18]", "t[17]", "t[16]", "t[15]", "t[14]",
+            "t[13]", "t[12]", "t[11]", "t[10]", "t[9]", "t[8]", "t[7]", "t[6]", "t[5]", "t[4]",
+            "t[3]", "t[2]", "t[1]", "t[0]",
+        ],
+    ];
+    let right_result = vec![
+        vec!["1'h0", "N1[0]"],
+        vec![
+            "N0[29]", "N0[28]", "N0[27]", "N0[26]", "N0[25]", "N0[24]", "N0[23]", "N0[22]",
+            "N0[21]", "N0[20]", "N0[19]", "N0[18]", "N0[17]", "N0[16]", "N0[15]", "N0[14]",
+            "N0[13]", "N0[12]", "N0[11]", "N0[10]", "N0[9]", "N0[8]", "N0[7]", "N0[6]", "N0[5]",
+            "N0[4]", "N0[3]", "N0[2]", "N0[1]", "N0[0]", "1'h0", "1'h0",
+        ],
+        vec![
+            "1'hx",
+            "beta_3[31]",
+            "beta_3[30]",
+            "beta_3[29]",
+            "beta_3[28]",
+            "beta_3[27]",
+            "beta_3[26]",
+            "beta_3[25]",
+            "beta_3[24]",
+            "beta_3[23]",
+            "beta_3[22]",
+            "beta_3[21]",
+            "beta_3[20]",
+            "beta_3[19]",
+            "beta_3[18]",
+            "beta_3[17]",
+            "beta_3[16]",
+            "beta_3[15]",
+            "beta_3[14]",
+            "beta_3[13]",
+            "beta_3[12]",
+            "beta_3[11]",
+            "beta_3[10]",
+            "beta_3[9]",
+            "beta_3[8]",
+            "beta_3[7]",
+            "beta_3[6]",
+            "beta_3[5]",
+            "beta_3[4]",
+            "beta_3[3]",
+            "1'h0",
+            "N1[0]",
+        ],
+    ];
+
+    for (p, (left, right)) in prompts
+        .iter()
+        .zip(left_result.iter().zip(right_result.iter()))
+    {
+        let cleaned_prompt = p.replace("assign", "").replace(";", "").replace(" ", "");
+        let (l, r) = get_multibit_assign_wires(&cleaned_prompt);
+
+        for (l, expected_l) in l.iter().zip(left.iter()) {
+            assert_eq!(*l, *expected_l);
+        }
+        for (r, expected_r) in r.iter().zip(right.iter()) {
+            assert_eq!(*r, *expected_r);
+        }
+    }
 }

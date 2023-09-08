@@ -1,9 +1,8 @@
-use clap::{Arg, Command, ArgAction};
+use clap::{Arg, ArgAction, Command};
+use image::{DynamicImage, GenericImageView};
+use rand::Rng;
 use std::fs::File;
 use std::io::prelude::*;
-use rand::Rng;
-use image::{DynamicImage, GenericImageView, GrayImage};
-use csv::ReaderBuilder;
 
 fn compress_pixel_data(pixel_data: u8) -> u8 {
     (pixel_data as u16 * 15 / 255) as u8
@@ -26,7 +25,11 @@ fn generate_input_wires(height: usize, width: usize, compress: bool) -> String {
     inputs
 }
 
-fn generate_input_wires_from_image(image: &DynamicImage, padding: u8, compress: bool) -> (String, usize, usize) {
+fn generate_input_wires_from_image(
+    image: &DynamicImage,
+    padding: u8,
+    compress: bool,
+) -> (String, usize, usize) {
     let (width, height) = image.dimensions();
     let mut inputs = String::from("wire, value\n");
 
@@ -36,20 +39,20 @@ fn generate_input_wires_from_image(image: &DynamicImage, padding: u8, compress: 
             if compress {
                 pixel_value = compress_pixel_data(pixel_value);
             }
-            inputs.push_str(&format!("p_{}_{}, {}\n", r+1, c+1, pixel_value));
+            inputs.push_str(&format!("p_{}_{}, {}\n", r + 1, c + 1, pixel_value));
         }
     }
 
     // Add padding
-    for r in 0..(height+1) {
+    for r in 0..(height + 1) {
         inputs.push_str(&format!("p_{}_0, {}\n", r, padding));
-        inputs.push_str(&format!("p_{}_{}, {}\n", r, width+1, padding));
+        inputs.push_str(&format!("p_{}_{}, {}\n", r, width + 1, padding));
     }
-    for c in 0..(width+1) {
-        inputs.push_str(&format!("p_0_{}, {}\n", c+1, padding));
-        inputs.push_str(&format!("p_{}_{}, {}\n", height+1, c+1, padding));
+    for c in 0..(width + 1) {
+        inputs.push_str(&format!("p_0_{}, {}\n", c + 1, padding));
+        inputs.push_str(&format!("p_{}_{}, {}\n", height + 1, c + 1, padding));
     }
-    inputs.push_str(&format!("p_{}_{}, {}\n", height+1, 0, padding)); // extra corner case
+    inputs.push_str(&format!("p_{}_{}, {}\n", height + 1, 0, padding)); // extra corner case
 
     (inputs, (height + 2) as usize, (width + 2) as usize)
 }
@@ -61,8 +64,8 @@ fn generate_convolution_module(height: usize, width: usize) -> String {
             module_code.push_str(&format!("p_{}_{}, ", r, c));
         }
     }
-    for r in 1..height-1 {
-        for c in 1..width-1 {
+    for r in 1..height - 1 {
+        for c in 1..width - 1 {
             module_code.push_str(&format!("out_{}_{}, ", r, c));
         }
     }
@@ -74,13 +77,13 @@ fn generate_convolution_module(height: usize, width: usize) -> String {
             module_code.push_str(&format!("  input [7:0] p_{}_{};\n", r, c));
         }
     }
-    module_code.push_str("\n");
-    for r in 1..height-1 {
-        for c in 1..width-1 {
+    module_code.push('\n');
+    for r in 1..height - 1 {
+        for c in 1..width - 1 {
             module_code.push_str(&format!("  output [7:0] out_{}_{};\n", r, c));
         }
     }
-    module_code.push_str("\n");
+    module_code.push('\n');
 
     for r in 0..height {
         for c in 0..width {
@@ -94,65 +97,88 @@ fn generate_convolution_module(height: usize, width: usize) -> String {
             module_code.push_str(&format!("  wire [7:0] t_r{}_c{}_7;\n", r, c));
         }
     }
-    module_code.push_str("\n");
-    
+    module_code.push('\n');
+
     for r in 1..height - 1 {
         for c in 1..width - 1 {
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_0 = p_{}_{} + p_{}_{};\n",
-                r, c,
-                r - 1, c, // N
-                r, c - 1  // W
+                r,
+                c,
+                r - 1,
+                c, // N
+                r,
+                c - 1 // W
             ));
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_1 = p_{}_{} + p_{}_{};\n",
-                r, c,
-                r + 1, c, // S
-                r, c + 1  // E
+                r,
+                c,
+                r + 1,
+                c, // S
+                r,
+                c + 1 // E
             ));
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_2 = p_{}_{} + p_{}_{};\n",
-                r, c,
-                r - 1, c - 1, // NW
-                r - 1, c + 1  // NE
+                r,
+                c,
+                r - 1,
+                c - 1, // NW
+                r - 1,
+                c + 1 // NE
             ));
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_3 = p_{}_{} + p_{}_{};\n",
-                r, c,
-                r + 1, c - 1, // SW
-                r + 1, c + 1  // SE
+                r,
+                c,
+                r + 1,
+                c - 1, // SW
+                r + 1,
+                c + 1 // SE
             ));
 
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_4 = t_r{}_c{}_0 + p_{}_{};\n",
-                r, c,
-                r, c, // N + W
-                r, c  // C
+                r,
+                c,
+                r,
+                c, // N + W
+                r,
+                c // C
             ));
 
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_5 = t_r{}_c{}_2 + t_r{}_c{}_3;\n",
-                r, c,
-                r, c, // NW + NE
-                r, c  // SW + SE
+                r,
+                c,
+                r,
+                c, // NW + NE
+                r,
+                c // SW + SE
             ));
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_6 = t_r{}_c{}_1 + t_r{}_c{}_4;\n",
-                r, c,
-                r, c, // S + E
-                r, c  // (N + W) + C
+                r,
+                c,
+                r,
+                c, // S + E
+                r,
+                c // (N + W) + C
             ));
             module_code.push_str(&format!(
                 "  assign t_r{}_c{}_7 = t_r{}_c{}_5 + t_r{}_c{}_6;\n",
-                r, c,
-                r, c, // (NW + NE) + (SW + SE)
-                r, c  // (S + E) + (N + W) + C
+                r,
+                c,
+                r,
+                c, // (NW + NE) + (SW + SE)
+                r,
+                c // (S + E) + (N + W) + C
             ));
 
             module_code.push_str(&format!(
                 "  assign out_{}_{} = t_r{}_c{}_7 / 9;\n\n",
-                r, c,
-                r, c
+                r, c, r, c
             ));
         }
     }
@@ -187,7 +213,7 @@ fn main() {
                 .long("image")
                 .value_name("STRING")
                 .help("Path to image")
-                .required_unless_present_any(&["height", "width"])
+                .required_unless_present_any(["height", "width"])
                 .value_parser(clap::value_parser!(String)),
         )
         .arg(

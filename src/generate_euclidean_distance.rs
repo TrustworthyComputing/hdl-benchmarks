@@ -1,7 +1,7 @@
 use clap::{Arg, Command};
+use rand::Rng;
 use std::fs::File;
 use std::io::prelude::*;
-use rand::Rng;
 
 fn generate_input_vectors(size: usize) -> String {
     let mut inputs = String::from("wire, value\n");
@@ -23,7 +23,7 @@ fn generate_distance_module(size: usize) -> String {
         module_code.push_str(&format!("u_{}, ", v));
         module_code.push_str(&format!("v_{}, ", v));
     }
-    module_code.push_str(&format!("dist, "));
+    module_code.push_str("dist, ");
     module_code.truncate(module_code.len() - 2); // remove last space and comma
     module_code.push_str(");\n\n");
 
@@ -31,43 +31,33 @@ fn generate_distance_module(size: usize) -> String {
         module_code.push_str(&format!("  input [15:0] u_{};\n", v));
         module_code.push_str(&format!("  input [15:0] v_{};\n", v));
     }
-    module_code.push_str("\n");
+    module_code.push('\n');
     module_code.push_str("  output [15:0] dist;\n");
-    module_code.push_str("\n");
+    module_code.push('\n');
 
     for v in 0..size {
         module_code.push_str(&format!("  wire [15:0] t_diff_v{};\n", v));
         module_code.push_str(&format!("  wire [15:0] t0_sum_v{};\n", v));
     }
     let log_size = (f64::log2(size as f64) as usize) + 1;
-    let mut add_size = size; 
+    let mut add_size = size;
     for depth in 0..log_size {
         let mut i = 0;
-        for _ in (0..add_size-1).step_by(2) {
-            module_code.push_str(&format!(
-                "  wire [15:0] t{}_sum_v{};\n",
-                depth + 1, i,
-            ));
+        for _ in (0..add_size - 1).step_by(2) {
+            module_code.push_str(&format!("  wire [15:0] t{}_sum_v{};\n", depth + 1, i,));
             i += 1;
         }
         // if the dimension is odd
         if add_size % 2 == 1 {
-            module_code.push_str(&format!(
-                "  wire [15:0] t{}_sum_v{};\n",
-                depth + 1, i,
-            ));
+            module_code.push_str(&format!("  wire [15:0] t{}_sum_v{};\n", depth + 1, i,));
         }
         add_size = (add_size as f32 / 2.0).ceil() as usize;
     }
 
-
-    module_code.push_str("\n");
+    module_code.push('\n');
 
     for v in 0..size {
-        module_code.push_str(&format!(
-            "  assign t_diff_v{} = v_{} - u_{};\n",
-            v, v, v
-        ));
+        module_code.push_str(&format!("  assign t_diff_v{} = v_{} - u_{};\n", v, v, v));
         module_code.push_str(&format!(
             "  assign t0_sum_v{} = t_diff_v{} * t_diff_v{};\n",
             v, v, v
@@ -77,12 +67,15 @@ fn generate_distance_module(size: usize) -> String {
     for depth in 0..log_size {
         let mut i = 0;
 
-        for r2 in (0..add_size-1).step_by(2) {
+        for r2 in (0..add_size - 1).step_by(2) {
             module_code.push_str(&format!(
                 "  assign t{}_sum_v{} = t{}_sum_v{} + t{}_sum_v{};\n",
-                depth + 1, i,
-                depth, r2,
-                depth, r2 + 1
+                depth + 1,
+                i,
+                depth,
+                r2,
+                depth,
+                r2 + 1
             ));
             i += 1;
         }
@@ -90,17 +83,16 @@ fn generate_distance_module(size: usize) -> String {
         if add_size % 2 == 1 {
             module_code.push_str(&format!(
                 "  assign t{}_sum_v{} = t{}_sum_v{};\n",
-                depth + 1, i,
-                depth, add_size - 1
+                depth + 1,
+                i,
+                depth,
+                add_size - 1
             ));
         }
         add_size = (add_size as f32 / 2.0).ceil() as usize;
-        module_code.push_str("\n");
+        module_code.push('\n');
     }
-    module_code.push_str(&format!(
-        "  assign dist = t{}_sum_v{};\n",
-        log_size, 0
-    ));
+    module_code.push_str(&format!("  assign dist = t{}_sum_v{};\n", log_size, 0));
 
     module_code.push_str("endmodule\n");
     module_code

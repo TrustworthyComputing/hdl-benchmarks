@@ -1,7 +1,7 @@
-use image::GrayImage;
-use clap::{Arg, Command, ArgAction};
-use std::fs::File;
+use clap::{Arg, ArgAction, Command};
 use csv::ReaderBuilder;
+use image::GrayImage;
+use std::fs::File;
 
 fn decompress_pixel_data(pixel_data: u8) -> u8 {
     (pixel_data as u16 * 255 / 15) as u8
@@ -26,7 +26,10 @@ fn reconstruct_image(csv_path: &str, width: u32, height: u32, decompress: bool, 
             if position.len() == 2 {
                 let h = (position[0] - 1) as u32;
                 let w = (position[1] - 1) as u32;
-                let mut value: u8 = record[1].trim().parse().expect("Failed to parse pixel value");
+                let mut value: u8 = record[1]
+                    .trim()
+                    .parse()
+                    .expect("Failed to parse pixel value");
                 if decompress {
                     value = decompress_pixel_data(value);
                 }
@@ -35,7 +38,9 @@ fn reconstruct_image(csv_path: &str, width: u32, height: u32, decompress: bool, 
         }
     }
 
-    image.save(output_path).expect("Failed to save image to file");
+    image
+        .save(output_path)
+        .expect("Failed to save image to file");
 
     println!("Image written at {}", output_path);
 }
@@ -89,6 +94,6 @@ fn main() {
     let width = matches.get_one::<u32>("width").unwrap();
     let csv_input = matches.get_one::<String>("decrypted-outputs").unwrap();
     let im_file = matches.get_one::<String>("image").unwrap();
-    
+
     reconstruct_image(csv_input, *width, *height, decompress, im_file);
 }

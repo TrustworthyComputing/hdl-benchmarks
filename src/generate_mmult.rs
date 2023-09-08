@@ -1,7 +1,7 @@
 use clap::{Arg, Command};
+use rand::Rng;
 use std::fs::File;
 use std::io::prelude::*;
-use rand::Rng;
 
 fn generate_input_matrices(size: usize) -> String {
     let mut inputs = String::from("wire, value\n");
@@ -41,13 +41,13 @@ fn generate_mmult_module(size: usize) -> String {
             module_code.push_str(&format!("  input [15:0] b_{}_{};\n", r, c));
         }
     }
-    module_code.push_str("\n");
+    module_code.push('\n');
     for r in 0..size {
         for c in 0..size {
             module_code.push_str(&format!("  output [15:0] c_{}_{};\n", r, c));
         }
     }
-    module_code.push_str("\n");
+    module_code.push('\n');
 
     for r in 0..size {
         for c in 0..size {
@@ -55,50 +55,69 @@ fn generate_mmult_module(size: usize) -> String {
                 module_code.push_str(&format!("  wire [15:0] t0_r{}_c{}_rr{};\n", r, c, r2));
             }
             let log_size = (f64::log2(size as f64) as usize) + 1;
-            let mut add_size = size; 
+            let mut add_size = size;
             for depth in 0..log_size {
                 let mut i = 0;
-                for _ in (0..add_size-1).step_by(2) {
-                    module_code.push_str(&format!("  wire [15:0] t{}_r{}_c{}_rr{};\n", depth + 1, r, c, i));
+                for _ in (0..add_size - 1).step_by(2) {
+                    module_code.push_str(&format!(
+                        "  wire [15:0] t{}_r{}_c{}_rr{};\n",
+                        depth + 1,
+                        r,
+                        c,
+                        i
+                    ));
                     i += 1;
                 }
                 // if the dimension is odd
                 if add_size % 2 == 1 {
-                    module_code.push_str(&format!("  wire [15:0] t{}_r{}_c{}_rr{};\n", depth + 1, r, c, i));
+                    module_code.push_str(&format!(
+                        "  wire [15:0] t{}_r{}_c{}_rr{};\n",
+                        depth + 1,
+                        r,
+                        c,
+                        i
+                    ));
                 }
                 add_size = (add_size as f32 / 2.0).ceil() as usize;
             }
         }
     }
-    module_code.push_str("\n");
-    
-// a s d f g
-//  b   y  g
-//    w  x
-//      s
+    module_code.push('\n');
+
+    // a s d f g
+    //  b   y  g
+    //    w  x
+    //      s
 
     for r in 0..size {
         for c in 0..size {
             for r2 in 0..size {
                 module_code.push_str(&format!(
                     "  assign t0_r{}_c{}_rr{} = a_{}_{} * b_{}_{};\n",
-                    r, c, r2,
-                    r, r2,
-                    r2, c
+                    r, c, r2, r, r2, r2, c
                 ));
             }
             let log_size = (f64::log2(size as f64) as usize) + 1;
-            let mut add_size = size; 
-            
+            let mut add_size = size;
+
             for depth in 0..log_size {
                 let mut i = 0;
 
-                for r2 in (0..add_size-1).step_by(2) {
+                for r2 in (0..add_size - 1).step_by(2) {
                     module_code.push_str(&format!(
                         "  assign t{}_r{}_c{}_rr{} = t{}_r{}_c{}_rr{} + t{}_r{}_c{}_rr{};\n",
-                        depth + 1, r, c, i,
-                        depth, r, c, r2,
-                        depth, r, c, r2 + 1
+                        depth + 1,
+                        r,
+                        c,
+                        i,
+                        depth,
+                        r,
+                        c,
+                        r2,
+                        depth,
+                        r,
+                        c,
+                        r2 + 1
                     ));
                     i += 1;
                 }
@@ -106,17 +125,22 @@ fn generate_mmult_module(size: usize) -> String {
                 if add_size % 2 == 1 {
                     module_code.push_str(&format!(
                         "  assign t{}_r{}_c{}_rr{} = t{}_r{}_c{}_rr{};\n",
-                        depth + 1, r, c, i,
-                        depth, r, c, add_size - 1,
+                        depth + 1,
+                        r,
+                        c,
+                        i,
+                        depth,
+                        r,
+                        c,
+                        add_size - 1,
                     ));
                 }
                 add_size = (add_size as f32 / 2.0).ceil() as usize;
-                module_code.push_str("\n");
+                module_code.push('\n');
             }
             module_code.push_str(&format!(
                 "  assign c_{}_{} = t{}_r{}_c{}_rr{};\n",
-                r, c,
-                log_size, r, c, 0,
+                r, c, log_size, r, c, 0,
             ));
         }
     }
@@ -141,8 +165,14 @@ fn main() {
     let size = *matches.get_one::<usize>("rows").unwrap();
     println!("rows: {}, columns: {}", size, size);
 
-    let filename = size.to_string() + "x" + &size.to_string() + "_x_" + 
-                    &size.to_string() + "x" + &size.to_string() + "-mmult";
+    let filename = size.to_string()
+        + "x"
+        + &size.to_string()
+        + "_x_"
+        + &size.to_string()
+        + "x"
+        + &size.to_string()
+        + "-mmult";
     let verilog_filename = "./designs/".to_owned() + filename.as_str() + ".v";
     let inputs_filename = "./test-cases/".to_owned() + filename.as_str() + ".inputs.csv";
 
