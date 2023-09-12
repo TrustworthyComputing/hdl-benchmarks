@@ -19,6 +19,7 @@ generated with the following [Yosys](https://github.com/YosysHQ/yosys) commands:
 read_verilog [MY_DESIGN].v
 synth
 abc -g [GATE_TYPES] 
+splitnets
 write_verilog -noexpr [MY_DESIGN].struct.v
 ```
 

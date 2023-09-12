@@ -13,28 +13,28 @@ rand = "0.8"
 
 [[bin]]
 name = "preprocessor"
-path = "src/preprocessor.rs"
+path = "src/bin/preprocessor.rs"
 
 [[bin]]
 name = "generate_adder"
-path = "src/generate_adder.rs"
+path = "src/bin/generate_adder.rs"
 
 [[bin]]
 name = "generate_box_blur_filter"
-path = "src/generate_box_blur_filter.rs"
+path = "src/bin/generate_box_blur_filter.rs"
 
 [[bin]]
 name = "generate_gaussian_blur_filter"
-path = "src/generate_gaussian_blur_filter.rs"
+path = "src/bin/generate_gaussian_blur_filter.rs"
 
 [[bin]]
 name = "postprocess_blur_filter"
-path = "src/postprocess_blur_filter.rs"
+path = "src/bin/postprocess_blur_filter.rs"
 
 [[bin]]
 name = "generate_mmult"
-path = "src/generate_mmult.rs"
+path = "src/bin/generate_mmult.rs"
 
 [[bin]]
 name = "generate_euclidean_distance"
-path = "src/generate_euclidean_distance.rs"
+path = "src/bin/generate_euclidean_distance.rs"

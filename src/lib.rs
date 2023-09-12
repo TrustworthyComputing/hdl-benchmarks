@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
-fn parse_args() -> (String, String, bool) {
+pub fn parse_args() -> (String, String, bool) {
     let matches = Command::new("HDL Preprocessor")
         .about("Preprocess Yosys outputs to cleaner structural Verilog")
         .arg(
@@ -80,70 +80,206 @@ fn postprocess_assign_dict(
     }
 }
 
-fn get_multibit_assign_wires(line: &str) -> (Vec<String>, Vec<String>) {
-    let mut left_side = Vec::new();
-    let mut right_side = Vec::new();
+/// Single bit assign:
+/// 1) assign dest = source;
+/// 2) assign dest[WIRE_ID] = source;
+/// 3) assign dest [WIRE_ID] = source;
+/// 4) assign dest = source [WIRE_ID];
+/// 5) assign dest = source[WIRE_ID];
+/// 6) assign dest [WIRE_ID] = source [WIRE_ID];
+/// 7) assign dest [WIRE_ID] = source[WIRE_ID];
+/// 8) assign dest[WIRE_ID] = source [WIRE_ID];
+/// 9) assign dest[WIRE_ID] = source[WIRE_ID];
+///
+/// Multi-bit assign:
+/// 1) assign { w1, w2, w3, ..., w16 } = { x1, x2, x3, ..., x16 };
+/// 2) assign { w1, w2, w3, ..., w16 } = x[15:0];
+/// 3) assign { w1, w2, w3, ..., w16 } = { x[13:0], 1h'0, x[0]};
+/// 4) assign w[15:0] = { x1, x2, x3, ..., x16 };
+/// 5) assign { w[13:0], w[15:14] } = { x1, x2, x3, ..., x16 };
+/// 6) assign w = { x1, x2, x3, ..., x16 };
+/// 7) assign w = x;
+/// 8) assign w[15:0] = x;
+/// 9) assign w = x[15:0];
+pub fn get_multibit_assign_wires(
+    unsanitized_line: &str,
+    multibit_ports: &HashMap<String, u32>,
+    wire_to_port: &mut HashMap<String, String>,
+    leftover_maps: &mut HashMap<String, Vec<String>>,
+    assign_dict: &mut HashMap<String, String>,
+    output_ports: &HashSet<String>,
+) {
+    let line: String = unsanitized_line.replace("assign", "").replace([';', ' '], "");
 
-    // Split the line by '='
-    let s = line.replace(&[';', ' ', '{', '}'][..], "");
-    let parts: Vec<&str> = s.split('=').collect();
+    if line.contains(':') || line.contains('{') {
+        let mut left_side = Vec::new();
+        let mut right_side = Vec::new();
 
-    assert_eq!(parts.len(), 2);
+        // Split the line by '='
+        let s = line.replace(&[';', ' ', '{', '}'][..], "");
+        
+        // Extract the left and right sides
+        let parts: Vec<&str> = s.split('=').collect();
+        let left = parts[0];
+        let right = parts[1];
 
-    // Extract the left and right sides
-    let left = parts[0];
-    let right = parts[1];
+        assert_eq!(parts.len(), 2);
 
-    // Split the brace content by commas
-    let wire_names: Vec<&str> = left.split(',').map(|s| s.trim()).collect();
-    for wire_name in wire_names {
-        if let Some(left_bracket) = wire_name.find('[') {
-            if let Some(right_bracket) = wire_name.rfind(']') {
-                let name = &wire_name[0..left_bracket];
-                let range = &wire_name[(left_bracket + 1)..right_bracket];
-                if range.contains(':') {
-                    let (start, end) = parse_range(range);
-                    for i in (end..=start).rev() {
-                        left_side.push(format!("{}[{}]", name, i));
+        // Split the brace content by commas
+        let wire_names: Vec<&str> = left.split(',').map(|s| s.trim()).collect();
+        for wire_name in wire_names {
+            if let Some(left_bracket) = wire_name.find('[') {
+                if let Some(right_bracket) = wire_name.rfind(']') {
+                    let name = &wire_name[0..left_bracket];
+                    let range = &wire_name[(left_bracket + 1)..right_bracket];
+                    if range.contains(':') {
+                        let (start, end) = parse_range(range);
+                        for i in (end..=start).rev() {
+                            left_side.push(format!("{}[{}]", name, i));
+                        }
+                    } else {
+                        left_side.push(wire_name.to_string());
                     }
-                } else {
-                    left_side.push(wire_name.to_string());
+                }
+            } else {
+                left_side.push(wire_name.to_string());
+            }
+        }
+
+        // Split the brace content by commas
+        let wire_names_right: Vec<&str> = right.split(',').map(|s| s.trim()).collect();
+        for wire_name in wire_names_right {
+            if let Some(left_bracket) = wire_name.find('[') {
+                if let Some(right_bracket) = wire_name.rfind(']') {
+                    let name = &wire_name[0..left_bracket];
+                    let range = &wire_name[(left_bracket + 1)..right_bracket];
+                    if range.contains(':') {
+                        let (start, end) = parse_range(range);
+                        for i in (end..=start).rev() {
+                            right_side.push(format!("{}[{}]", name, i));
+                        }
+                    } else {
+                        right_side.push(wire_name.to_string());
+                    }
+                }
+            } else if wire_name.contains("'h") {
+                // foo[1:0] = 2'h0; => foo[1], foo[0] = 1'h0, 1'h0;
+                let wire_name_split: Vec<&str> = wire_name.split('\'').collect();
+                let bit_len = wire_name_split[0].parse::<i32>().unwrap_or(0);
+                for _ in 0..bit_len {
+                    right_side.push("1'".to_owned() + wire_name_split[1]);
+                }
+            } else {
+                right_side.push(wire_name.to_string());
+            }
+        }
+
+        // (left_side, right_side)
+
+        // if left_side.len() != right_side.len() {
+        for j in 0..left_side.len() {
+            if !left_side[j].contains('[') && multibit_ports.contains_key(&left_side[j]) {
+                let tmp_id = left_side[j].clone();
+                left_side.remove(j);
+                for i in 0..multibit_ports[&tmp_id] {
+                    left_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
                 }
             }
-        } else {
-            left_side.push(wire_name.to_string());
         }
-    }
-
-    // Split the brace content by commas
-    let wire_names_right: Vec<&str> = right.split(',').map(|s| s.trim()).collect();
-    for wire_name in wire_names_right {
-        if let Some(left_bracket) = wire_name.find('[') {
-            if let Some(right_bracket) = wire_name.rfind(']') {
-                let name = &wire_name[0..left_bracket];
-                let range = &wire_name[(left_bracket + 1)..right_bracket];
-                if range.contains(':') {
-                    let (start, end) = parse_range(range);
-                    for i in (end..=start).rev() {
-                        right_side.push(format!("{}[{}]", name, i));
-                    }
-                } else {
-                    right_side.push(wire_name.to_string());
+        for j in 0..right_side.len() {
+            if !right_side[j].contains('[') && multibit_ports.contains_key(&right_side[j]) {
+                let tmp_id = right_side[j].clone();
+                right_side.remove(j);
+                for i in 0..multibit_ports[&tmp_id] {
+                    right_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
                 }
             }
-        } else if wire_name.contains("'h") {
-            // foo[1:0] = 2'h0; => foo[1], foo[0] = 1'h0, 1'h0;
-            let wire_name_split: Vec<&str> = wire_name.split('\'').collect();
-            let bit_len = wire_name_split[0].parse::<i32>().unwrap_or(0);
-            for _ in 0..bit_len {
-                right_side.push("1'".to_owned() + wire_name_split[1]);
+        }
+        assert_eq!(
+            left_side.len(),
+            right_side.len(),
+            "assign statement LHS is not the same size as RHS!"
+        );
+        for i in 0..left_side.len() {
+            let output = left_side[i].clone();
+            let input = right_side[i].clone();
+
+            if output_ports.contains(&output) {
+                if wire_to_port.contains_key(&input) {
+                    leftover_maps
+                        .entry(input.clone())
+                        .or_insert(Vec::new())
+                        .push(output.clone());
+                } else {
+                    wire_to_port.insert(input.clone(), output.clone());
+                }
             }
-        } else {
-            right_side.push(wire_name.to_string());
+            if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(output.clone())
+            {
+                e.insert(input);
+            } else {
+                leftover_maps
+                    .entry(output.clone())
+                    .or_insert(Vec::new())
+                    .push(input.clone());
+            }
+        }
+    } else {
+        // single-bit or single-port assign
+        let tokens: Vec<&str> = line.split('=').collect();
+        let output = tokens[0].to_string();
+        let input = tokens[1].to_string();
+        let mut is_multibit_port = false;
+
+        if output_ports.contains(&output) {
+            if !multibit_ports.contains_key(&output) {
+                assert_eq!(multibit_ports.contains_key(&input),false, "Can't assign multi-bit port to single-bit port!");
+                println!("multibit_ports: {:?}", multibit_ports);
+                if wire_to_port.contains_key(&input) {
+                    leftover_maps
+                        .entry(input.clone())
+                        .or_insert(Vec::new())
+                        .push(output.clone());
+                } else {
+                    wire_to_port.insert(input.clone(), output.clone());
+                }
+            } else {
+                is_multibit_port = true;
+                println!("HERE!");
+                assert!(multibit_ports.contains_key(&input), "Can't assign single-bit port to multi-bit port!");
+                assert_eq!(multibit_ports[&output] , multibit_ports[&input], "Multi-bit ports need to be the same length!");
+                for i in 0..multibit_ports[&output] {
+                    let single_wire_out = output.clone() + "[" + &i.to_string() + "]";
+                    let single_wire_in = input.clone() + "[" + &i.to_string() + "]";
+                    if wire_to_port.contains_key(&single_wire_in) {
+                        leftover_maps.entry(single_wire_in.clone())
+                                     .or_insert(Vec::new())
+                                     .push(single_wire_out.clone());
+                    } else {
+                        wire_to_port.insert(single_wire_in.clone(), single_wire_out.clone());
+                    }
+                    if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(single_wire_out.clone()) {
+                      e.insert(single_wire_in);
+                    } else {
+                        leftover_maps
+                            .entry(single_wire_out.clone())
+                            .or_insert(Vec::new())
+                            .push(single_wire_in.clone());
+                    }
+                }
+            }
+        }
+        if !is_multibit_port {
+            if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(output.clone()) {
+                e.insert(input);
+            } else {
+                leftover_maps
+                    .entry(output.clone())
+                    .or_insert(Vec::new())
+                    .push(input.clone());
+            }
         }
     }
-
-    (left_side, right_side)
 }
 
 fn parse_range(range: &str) -> (i32, i32) {
@@ -159,7 +295,7 @@ fn parse_range(range: &str) -> (i32, i32) {
     (0, 0) // Default range if parsing fails
 }
 
-fn build_assign_dict(
+pub fn build_assign_dict(
     in_file_name: &String,
 ) -> (HashMap<String, String>, HashMap<String, Vec<String>>) {
     let in_file = File::open(in_file_name).expect("Failed to open file");
@@ -167,6 +303,7 @@ fn build_assign_dict(
     let mut assign_dict: HashMap<String, String> = HashMap::new();
     let mut wire_to_port: HashMap<String, String> = HashMap::new();
     let mut output_ports = HashSet::new();
+    let mut multibit_ports: HashMap<String, u32> = HashMap::new();
     let mut leftover_maps: HashMap<String, Vec<String>> = HashMap::new();
     for line in reader.lines() {
         let line = line.expect("Failed to read line").trim().to_owned();
@@ -182,17 +319,16 @@ fn build_assign_dict(
                     let number_str = &line[open_bracket + 1..colon];
                     // Parse the substring to an integer
                     if let Ok(number) = number_str.parse::<i32>() {
+                        let tmp_name = line
+                            .split(' ')
+                            .nth(2)
+                            .unwrap()
+                            .trim_end_matches(';')
+                            .to_string();
+                        multibit_ports.insert(tmp_name.clone(), number as u32 + 1);
                         for curr_wire in 0..number + 1 {
-                            output_ports.insert(
-                                line.split(' ')
-                                    .nth(2)
-                                    .unwrap()
-                                    .trim_end_matches(';')
-                                    .to_string()
-                                    + "["
-                                    + &curr_wire.to_string()
-                                    + "]",
-                            );
+                            output_ports
+                                .insert(tmp_name.clone() + "[" + &curr_wire.to_string() + "]");
                         }
                     } else {
                         println!("Error: Invalid number format.");
@@ -216,85 +352,16 @@ fn build_assign_dict(
             && !line.contains('*')
             && !line.contains('/')
         {
-            // assign dest = source;
-            // assign dest[WIRE_ID] = source;
-            // assign dest [WIRE_ID] = source;
-            // assign dest = source [WIRE_ID];
-            // assign dest = source[WIRE_ID];
-            // assign dest [WIRE_ID] = source [WIRE_ID];
-            // assign dest [WIRE_ID] = source[WIRE_ID];
-            // assign dest[WIRE_ID] = source [WIRE_ID];
-            // assign dest[WIRE_ID] = source[WIRE_ID];
-
             let cleaned_line: String = line.replace("assign", "").replace([';', ' '], "");
-
-            // multi-bit assign
-            if line.contains(':') || line.contains('{') {
-                let (left, right) = get_multibit_assign_wires(&cleaned_line);
-                assert_eq!(
-                    left.len(),
-                    right.len(),
-                    "assign statement LHS is not the same size as RHS!"
-                );
-                for i in 0..left.len() {
-                    let output = left[i].clone();
-                    let input = right[i].clone();
-
-                    if output_ports.contains(&output) {
-                        if wire_to_port.contains_key(&input) {
-                            leftover_maps
-                                .entry(input.clone())
-                                .or_insert(Vec::new())
-                                .push(output.clone());
-                        } else {
-                            wire_to_port.insert(input.clone(), output.clone());
-                        }
-                    }
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        assign_dict.entry(output.clone())
-                    {
-                        e.insert(input);
-                    } else {
-                        leftover_maps
-                            .entry(output.clone())
-                            .or_insert(Vec::new())
-                            .push(input.clone());
-                    }
-                }
-            } else {
-                // single-bit assign
-                let tokens: Vec<&str> = cleaned_line.split('=').collect();
-                let output = tokens[0].to_string();
-                let input = tokens[1].to_string();
-                if output_ports.contains(&output) {
-                    if wire_to_port.contains_key(&input) {
-                        leftover_maps
-                            .entry(input.clone())
-                            .or_insert(Vec::new())
-                            .push(output.clone());
-                    } else {
-                        wire_to_port.insert(input.clone(), output.clone());
-                    }
-                }
-                if let std::collections::hash_map::Entry::Vacant(e) =
-                    assign_dict.entry(output.clone())
-                {
-                    e.insert(input);
-                } else {
-                    leftover_maps
-                        .entry(output.clone())
-                        .or_insert(Vec::new())
-                        .push(input.clone());
-                }
-            }
+            get_multibit_assign_wires(&cleaned_line, &multibit_ports, &mut wire_to_port, &mut leftover_maps, &mut assign_dict, &output_ports);
         }
     }
-
     postprocess_assign_dict(&mut assign_dict, wire_to_port);
+
     (assign_dict, leftover_maps)
 }
 
-fn convert_verilog(
+pub fn convert_verilog(
     in_file_name: &String,
     out_file_name: &String,
     wire_dict: &HashMap<String, String>,
@@ -346,12 +413,7 @@ fn convert_verilog(
                     if token.contains('[') {
                         continue;
                     }
-                    wires.push(String::from(
-                        token
-                            .trim_matches(',')
-                            // .trim_matches('_')
-                            .trim_end_matches(';'),
-                    ));
+                    wires.push(String::from(token.trim_matches(',').trim_end_matches(';')));
                 }
             }
             "input" => {
@@ -810,105 +872,4 @@ fn convert_verilog(
     out_writer
         .write_all(b"\nendmodule\n")
         .expect("Failed to write line");
-}
-
-fn main() {
-    let (in_file_name, out_file_name, arith) = parse_args();
-
-    let (wire_dict, leftover_maps) = build_assign_dict(&in_file_name);
-    convert_verilog(
-        &in_file_name,
-        &out_file_name,
-        &wire_dict,
-        &leftover_maps,
-        arith,
-    );
-}
-
-#[test]
-fn test_get_multibit_assign_wires() {
-    let prompts = vec![
-        "assign alpha[1:0] = { 1'h0, N1[0] };",
-        r#"assign { t [31] , t [ 30 ] , t[ 29] , t[28] , t[27] , t[26] , t[25], t[24] , t[23] ,
-             t[22] , t[21] , t[20] , t[19] , t[18] , t[17], t[16] , t[15] , t[14] , t[13] , t[12] ,
-             t[11] , t[10] , t[9] , t[8] , t[7] , t[6] , t[5] , t[4] , t[3] , t[2] , t[1] , t[0]  } 
-             =  { N0 [ 29 : 0 ], 2'h0 };"#,
-        r#"assign { t[31] , t[30] , t[29] , t[28] , t[27] , t[26] , t[25] , t[24] , t[23] , t[22] ,
-             t[21] , t[20] , t[19] , t[18] , t[17] , t[16] , t[15] , t[14] , t[13] , t[12] , t[11] ,
-              t[10] , t[9] , t[8] , t[7] , t[6] , t[5] , t[4] , t[3] , t[2] , t[1] , t[0]  } = 
-              { 1'hx, beta_3[31:3], 1'h0, N1[0] };"#,
-    ];
-    let left_result = vec![
-        vec!["alpha[1]", "alpha[0]"],
-        vec![
-            "t[31]", "t[30]", "t[29]", "t[28]", "t[27]", "t[26]", "t[25]", "t[24]", "t[23]",
-            "t[22]", "t[21]", "t[20]", "t[19]", "t[18]", "t[17]", "t[16]", "t[15]", "t[14]",
-            "t[13]", "t[12]", "t[11]", "t[10]", "t[9]", "t[8]", "t[7]", "t[6]", "t[5]", "t[4]",
-            "t[3]", "t[2]", "t[1]", "t[0]",
-        ],
-        vec![
-            "t[31]", "t[30]", "t[29]", "t[28]", "t[27]", "t[26]", "t[25]", "t[24]", "t[23]",
-            "t[22]", "t[21]", "t[20]", "t[19]", "t[18]", "t[17]", "t[16]", "t[15]", "t[14]",
-            "t[13]", "t[12]", "t[11]", "t[10]", "t[9]", "t[8]", "t[7]", "t[6]", "t[5]", "t[4]",
-            "t[3]", "t[2]", "t[1]", "t[0]",
-        ],
-    ];
-    let right_result = vec![
-        vec!["1'h0", "N1[0]"],
-        vec![
-            "N0[29]", "N0[28]", "N0[27]", "N0[26]", "N0[25]", "N0[24]", "N0[23]", "N0[22]",
-            "N0[21]", "N0[20]", "N0[19]", "N0[18]", "N0[17]", "N0[16]", "N0[15]", "N0[14]",
-            "N0[13]", "N0[12]", "N0[11]", "N0[10]", "N0[9]", "N0[8]", "N0[7]", "N0[6]", "N0[5]",
-            "N0[4]", "N0[3]", "N0[2]", "N0[1]", "N0[0]", "1'h0", "1'h0",
-        ],
-        vec![
-            "1'hx",
-            "beta_3[31]",
-            "beta_3[30]",
-            "beta_3[29]",
-            "beta_3[28]",
-            "beta_3[27]",
-            "beta_3[26]",
-            "beta_3[25]",
-            "beta_3[24]",
-            "beta_3[23]",
-            "beta_3[22]",
-            "beta_3[21]",
-            "beta_3[20]",
-            "beta_3[19]",
-            "beta_3[18]",
-            "beta_3[17]",
-            "beta_3[16]",
-            "beta_3[15]",
-            "beta_3[14]",
-            "beta_3[13]",
-            "beta_3[12]",
-            "beta_3[11]",
-            "beta_3[10]",
-            "beta_3[9]",
-            "beta_3[8]",
-            "beta_3[7]",
-            "beta_3[6]",
-            "beta_3[5]",
-            "beta_3[4]",
-            "beta_3[3]",
-            "1'h0",
-            "N1[0]",
-        ],
-    ];
-
-    for (p, (left, right)) in prompts
-        .iter()
-        .zip(left_result.iter().zip(right_result.iter()))
-    {
-        let cleaned_prompt = p.replace("assign", "").replace(";", "").replace(" ", "");
-        let (l, r) = get_multibit_assign_wires(&cleaned_prompt);
-
-        for (l, expected_l) in l.iter().zip(left.iter()) {
-            assert_eq!(*l, *expected_l);
-        }
-        for (r, expected_r) in r.iter().zip(right.iter()) {
-            assert_eq!(*r, *expected_r);
-        }
-    }
 }
