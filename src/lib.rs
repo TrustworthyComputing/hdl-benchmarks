@@ -109,7 +109,9 @@ pub fn get_multibit_assign_wires(
     assign_dict: &mut HashMap<String, String>,
     output_ports: &HashSet<String>,
 ) {
-    let line: String = unsanitized_line.replace("assign", "").replace([';', ' '], "");
+    let line: String = unsanitized_line
+        .replace("assign", "")
+        .replace([';', ' '], "");
 
     if line.contains(':') || line.contains('{') {
         let mut left_side = Vec::new();
@@ -117,7 +119,7 @@ pub fn get_multibit_assign_wires(
 
         // Split the line by '='
         let s = line.replace(&[';', ' ', '{', '}'][..], "");
-        
+
         // Extract the left and right sides
         let parts: Vec<&str> = s.split('=').collect();
         let left = parts[0];
@@ -233,7 +235,10 @@ pub fn get_multibit_assign_wires(
 
         if output_ports.contains(&output) {
             if !multibit_ports.contains_key(&output) {
-                assert_eq!(multibit_ports.contains_key(&input),false, "Can't assign multi-bit port to single-bit port!");
+                assert!(
+                    !multibit_ports.contains_key(&input),
+                    "Can't assign multi-bit port to single-bit port!"
+                );
                 if wire_to_port.contains_key(&input) {
                     leftover_maps
                         .entry(input.clone())
@@ -244,20 +249,29 @@ pub fn get_multibit_assign_wires(
                 }
             } else {
                 is_multibit_port = true;
-                assert!(multibit_ports.contains_key(&input), "Can't assign single-bit port to multi-bit port!");
-                assert_eq!(multibit_ports[&output] , multibit_ports[&input], "Multi-bit ports need to be the same length!");
+                assert!(
+                    multibit_ports.contains_key(&input),
+                    "Can't assign single-bit port to multi-bit port!"
+                );
+                assert_eq!(
+                    multibit_ports[&output], multibit_ports[&input],
+                    "Multi-bit ports need to be the same length!"
+                );
                 for i in 0..multibit_ports[&output] {
                     let single_wire_out = output.clone() + "[" + &i.to_string() + "]";
                     let single_wire_in = input.clone() + "[" + &i.to_string() + "]";
                     if wire_to_port.contains_key(&single_wire_in) {
-                        leftover_maps.entry(single_wire_in.clone())
-                                     .or_insert(Vec::new())
-                                     .push(single_wire_out.clone());
+                        leftover_maps
+                            .entry(single_wire_in.clone())
+                            .or_insert(Vec::new())
+                            .push(single_wire_out.clone());
                     } else {
                         wire_to_port.insert(single_wire_in.clone(), single_wire_out.clone());
                     }
-                    if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(single_wire_out.clone()) {
-                      e.insert(single_wire_in);
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        assign_dict.entry(single_wire_out.clone())
+                    {
+                        e.insert(single_wire_in);
                     } else {
                         leftover_maps
                             .entry(single_wire_out.clone())
@@ -268,7 +282,8 @@ pub fn get_multibit_assign_wires(
             }
         }
         if !is_multibit_port {
-            if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(output.clone()) {
+            if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(output.clone())
+            {
                 e.insert(input);
             } else {
                 leftover_maps
@@ -351,7 +366,14 @@ pub fn build_assign_dict(
             && !line.contains('/')
         {
             let cleaned_line: String = line.replace("assign", "").replace([';', ' '], "");
-            get_multibit_assign_wires(&cleaned_line, &multibit_ports, &mut wire_to_port, &mut leftover_maps, &mut assign_dict, &output_ports);
+            get_multibit_assign_wires(
+                &cleaned_line,
+                &multibit_ports,
+                &mut wire_to_port,
+                &mut leftover_maps,
+                &mut assign_dict,
+                &output_ports,
+            );
         }
     }
     postprocess_assign_dict(&mut assign_dict, wire_to_port);
