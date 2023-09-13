@@ -181,7 +181,7 @@ pub fn get_multibit_assign_wires(
             if !left_side[j].contains('[') && multibit_ports.contains_key(&left_side[j]) {
                 let tmp_id = left_side[j].clone();
                 left_side.remove(j);
-                for i in 0..multibit_ports[&tmp_id] {
+                for i in (0..multibit_ports[&tmp_id]).rev() {
                     left_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
                 }
             }
@@ -190,7 +190,7 @@ pub fn get_multibit_assign_wires(
             if !right_side[j].contains('[') && multibit_ports.contains_key(&right_side[j]) {
                 let tmp_id = right_side[j].clone();
                 right_side.remove(j);
-                for i in 0..multibit_ports[&tmp_id] {
+                for i in (0..multibit_ports[&tmp_id]).rev() {
                     right_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
                 }
             }
@@ -234,7 +234,6 @@ pub fn get_multibit_assign_wires(
         if output_ports.contains(&output) {
             if !multibit_ports.contains_key(&output) {
                 assert_eq!(multibit_ports.contains_key(&input),false, "Can't assign multi-bit port to single-bit port!");
-                println!("multibit_ports: {:?}", multibit_ports);
                 if wire_to_port.contains_key(&input) {
                     leftover_maps
                         .entry(input.clone())
@@ -245,7 +244,6 @@ pub fn get_multibit_assign_wires(
                 }
             } else {
                 is_multibit_port = true;
-                println!("HERE!");
                 assert!(multibit_ports.contains_key(&input), "Can't assign single-bit port to multi-bit port!");
                 assert_eq!(multibit_ports[&output] , multibit_ports[&input], "Multi-bit ports need to be the same length!");
                 for i in 0..multibit_ports[&output] {
