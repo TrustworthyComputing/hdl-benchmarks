@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 
-use hdl_benchmarks::get_multibit_assign_wires;
+use hdl_benchmarks::{build_assign_dict, convert_verilog, get_multibit_assign_wires};
 
 /// output dest; // single-bit source, single-bit dest
 /// assign dest = source;
@@ -10,8 +12,7 @@ fn one_to_one_assignment_1() {
     let mut wire_to_port: HashMap<String, String> = HashMap::new();
     let mut leftover_maps: HashMap<String, Vec<String>> = HashMap::new();
     let mut assign_dict: HashMap<String, String> = HashMap::new();
-    let mut output_ports: HashSet<String> = HashSet::new();
-    output_ports.insert("dest".to_string());
+    let output_ports: HashSet<String> = HashSet::new();
     let prompt = "assign dest = source;";
     get_multibit_assign_wires(
         &prompt,
@@ -37,8 +38,8 @@ fn one_to_one_assignment_incorrect() {
     let mut wire_to_port: HashMap<String, String> = HashMap::new();
     let mut leftover_maps: HashMap<String, Vec<String>> = HashMap::new();
     let mut assign_dict: HashMap<String, String> = HashMap::new();
-    let mut output_ports: HashSet<String> = HashSet::new();
-    output_ports.insert("dest".to_string());
+    let output_ports: HashSet<String> = HashSet::new();
+    //output_ports.insert("dest".to_string());
     let prompt = "assign dest = source;";
     get_multibit_assign_wires(
         &prompt,
@@ -199,4 +200,60 @@ fn many_to_many_assignment_3() {
     );
     assert_eq!(assign_dict["d[1]"], "1'h0");
     assert_eq!(assign_dict["d[0]"], "s[0]");
+}
+
+/// Test for build_assign_dict function for a file with gates.
+#[test]
+fn build_assign_dict_v2_euclidean_gates() {
+    let (assign_dict, leftover_maps) =
+        build_assign_dict(&"./netlists/v2_euclidean_gates.v".to_string());
+
+    assert_eq!(assign_dict.len(), 96);
+    assert_eq!(leftover_maps.len(), 0);
+
+    assert_eq!(assign_dict["_3119_"], "v_1[1]");
+    assert_eq!(assign_dict["_1345_"], "\\dist[3]");
+    assert_eq!(assign_dict["_3070_"], "u_0[15]");
+}
+
+/// Test for build_assign_dict function for a file with arithmetic operations.
+#[test]
+fn build_assign_dict_v2_euclidean_arithmetic() {
+    let (assign_dict, leftover_maps) =
+        build_assign_dict(&"./designs/v2-euclidean-distance.v".to_string());
+
+    // Maps should be empty for arithmetic mode
+    assert_eq!(assign_dict.len(), 0);
+    assert_eq!(leftover_maps.len(), 0);
+}
+
+/// \$lut  #(.LUT(4'h8),.WIDTH(32'd2)) _1556823_ (.A(b_4_1[1:0]),.Y(_0743713_));
+/// => lut lut_gate[GATE_ID](0x8, b_4_1[1], b_4_1[0], _0743713_);
+#[test]
+fn lut_array_in_argument() {
+    let prompt = "\\$lut  #(.LUT(4'h8),.WIDTH(32'd2)) _1556823_ (.A(b_4_1[1:0]),.Y(_0743713_));";
+
+    println!("prompt: {:?}", prompt);
+
+    let wire_dict = HashMap::new();
+    let leftover_dict = HashMap::new();
+    let output_filename = "./netlists/test_output.v".to_string();
+
+    convert_verilog(
+        &"./netlists/lut-multibit-input-test.v".to_string(),
+        &output_filename,
+        &wire_dict,
+        &leftover_dict,
+        false,
+    );
+    let converted_file = File::open(output_filename).expect("Failed to open file");
+    let reader = BufReader::new(converted_file);
+    let lines: Vec<String> = reader
+        .lines()
+        .map(|line| line.expect("Failed to read line"))
+        .collect();
+
+    assert!(lines.contains(&"  lut lut_gate1(0x8, in1[1], in1[0], _0743713_);".to_string()));
+    assert!(lines
+        .contains(&"  lut lut_gate2(0x8, in2[1], in2[0], in1[1], in1[0], _0674559_);".to_string()));
 }

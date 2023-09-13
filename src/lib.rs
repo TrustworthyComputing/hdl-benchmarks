@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
@@ -216,8 +216,7 @@ pub fn get_multibit_assign_wires(
                     wire_to_port.insert(input.clone(), output.clone());
                 }
             }
-            if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(output.clone())
-            {
+            if let Entry::Vacant(e) = assign_dict.entry(output.clone()) {
                 e.insert(input);
             } else {
                 leftover_maps
@@ -231,14 +230,21 @@ pub fn get_multibit_assign_wires(
         let tokens: Vec<&str> = line.split('=').collect();
         let output = tokens[0].to_string();
         let input = tokens[1].to_string();
-        let mut is_multibit_port = false;
-
+        let is_multibit_port = if !multibit_ports.contains_key(&output) {
+            assert!(
+                !multibit_ports.contains_key(&input),
+                "Can't assign multi-bit port to single-bit port!"
+            );
+            false
+        } else {
+            true
+        };
         if output_ports.contains(&output) {
-            if !multibit_ports.contains_key(&output) {
-                assert!(
-                    !multibit_ports.contains_key(&input),
-                    "Can't assign multi-bit port to single-bit port!"
-                );
+            if !is_multibit_port {
+                // add mapping to convert wires directly to output ports
+                // if mapping already exists, save in leftover_maps
+                // assign y = x;
+                // assign z = x;
                 if wire_to_port.contains_key(&input) {
                     leftover_maps
                         .entry(input.clone())
@@ -248,7 +254,6 @@ pub fn get_multibit_assign_wires(
                     wire_to_port.insert(input.clone(), output.clone());
                 }
             } else {
-                is_multibit_port = true;
                 assert!(
                     multibit_ports.contains_key(&input),
                     "Can't assign single-bit port to multi-bit port!"
@@ -268,9 +273,7 @@ pub fn get_multibit_assign_wires(
                     } else {
                         wire_to_port.insert(single_wire_in.clone(), single_wire_out.clone());
                     }
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        assign_dict.entry(single_wire_out.clone())
-                    {
+                    if let Entry::Vacant(e) = assign_dict.entry(single_wire_out.clone()) {
                         e.insert(single_wire_in);
                     } else {
                         leftover_maps
@@ -281,9 +284,11 @@ pub fn get_multibit_assign_wires(
                 }
             }
         }
+
+        // assign x = 1'h0
+        // assign y = 1'h0
         if !is_multibit_port {
-            if let std::collections::hash_map::Entry::Vacant(e) = assign_dict.entry(output.clone())
-            {
+            if let Entry::Vacant(e) = assign_dict.entry(output.clone()) {
                 e.insert(input);
             } else {
                 leftover_maps
@@ -320,7 +325,7 @@ pub fn build_assign_dict(
     let mut leftover_maps: HashMap<String, Vec<String>> = HashMap::new();
     for line in reader.lines() {
         let line = line.expect("Failed to read line").trim().to_owned();
-        if line.contains("output") {
+        if line.contains("output") || line.contains("input") || line.contains("wire") {
             if line.contains('[') {
                 // Find the positions of '[' and ':'
                 let open_bracket_pos = line.find('[');
@@ -339,9 +344,11 @@ pub fn build_assign_dict(
                             .trim_end_matches(';')
                             .to_string();
                         multibit_ports.insert(tmp_name.clone(), number as u32 + 1);
-                        for curr_wire in 0..number + 1 {
-                            output_ports
-                                .insert(tmp_name.clone() + "[" + &curr_wire.to_string() + "]");
+                        if line.contains("output") {
+                            for curr_wire in 0..number + 1 {
+                                output_ports
+                                    .insert(tmp_name.clone() + "[" + &curr_wire.to_string() + "]");
+                            }
                         }
                     } else {
                         println!("Error: Invalid number format.");
@@ -349,7 +356,8 @@ pub fn build_assign_dict(
                 } else {
                     println!("Error: '[' and/or ':' not found in the string.");
                 }
-            } else {
+            } else if line.contains("output") {
+                // only do that for output ports
                 output_ports.insert(
                     line.split(' ')
                         .nth(1)
@@ -656,15 +664,69 @@ pub fn convert_verilog(
                                     .collect();
 
                                 for in_val in in_vals_vec {
-                                    let mut tmp_name = in_val;
-                                    while wire_dict.contains_key(&tmp_name) {
-                                        tmp_name = wire_dict[&tmp_name].to_string();
-                                        if outputs.contains(&tmp_name.to_string()) {
-                                            break;
+                                    if in_val.contains(':') {
+                                        // Initialize variables to store the extracted numbers
+                                        let mut extracted_number1: u32 = 0;
+                                        let mut extracted_number2: u32 = 0;
+                                        // foo[15:13]
+                                        // Find the index of '[' and ':'
+                                        if let Some(open_bracket_idx) = in_val.find('[') {
+                                            if let Some(colon_idx) = in_val.find(':') {
+                                                // Check if '[' appears before ':'
+                                                if open_bracket_idx < colon_idx {
+                                                    // Extract the substring between '[' and ':'
+                                                    let number1_str =
+                                                        &in_val[open_bracket_idx + 1..colon_idx];
+
+                                                    // Attempt to parse the first extracted substring as a u32
+                                                    if let Ok(number) = number1_str.parse::<u32>() {
+                                                        extracted_number1 = number;
+                                                    }
+
+                                                    // Find the index of ':]' (':' followed by ']')
+                                                    if let Some(closing_bracket_idx) =
+                                                        in_val.find(']')
+                                                    {
+                                                        // Extract the substring between ':' and ']'
+                                                        let number2_str = &in_val
+                                                            [colon_idx + 1..closing_bracket_idx];
+
+                                                        // Attempt to parse the second extracted substring as a u32
+                                                        if let Ok(number) =
+                                                            number2_str.parse::<u32>()
+                                                        {
+                                                            extracted_number2 = number;
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
+
+                                        let wire_id: String =
+                                            in_val.split('[').next().unwrap_or("").to_string();
+                                        for i in (extracted_number2..=extracted_number1).rev() {
+                                            let mut tmp_name =
+                                                wire_id.clone() + "[" + &i.to_string() + "]";
+                                            while wire_dict.contains_key(&tmp_name) {
+                                                tmp_name = wire_dict[&tmp_name].to_string();
+                                                if outputs.contains(&tmp_name.to_string()) {
+                                                    break;
+                                                }
+                                            }
+                                            lut_line += tmp_name.as_str();
+                                            lut_line += ", ";
+                                        }
+                                    } else {
+                                        let mut tmp_name = in_val;
+                                        while wire_dict.contains_key(&tmp_name) {
+                                            tmp_name = wire_dict[&tmp_name].to_string();
+                                            if outputs.contains(&tmp_name.to_string()) {
+                                                break;
+                                            }
+                                        }
+                                        lut_line += tmp_name.as_str();
+                                        lut_line += ", ";
                                     }
-                                    lut_line += tmp_name.as_str();
-                                    lut_line += ", ";
                                 }
                             } else if line.contains(".Y(") {
                                 let start_idx = line.find('(').unwrap_or(0) + 1;
