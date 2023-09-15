@@ -354,7 +354,7 @@ pub fn build_assign_dict(
                         println!("Error: Invalid number format.");
                     }
                 } else {
-                    println!("Error: '[' and/or ':' not found in the string.");
+                    println!("Error: '[' and/or ':' not found in the string: {:?}", &line);
                 }
             } else if line.contains("output") {
                 // only do that for output ports
@@ -739,7 +739,7 @@ pub fn convert_verilog(
                                         break;
                                     }
                                 }
-                                lut_line += out_value;
+                                lut_line += &out_value.replace(' ', "");
                                 lut_line += ");";
                             }
                             line = lines
@@ -787,10 +787,22 @@ pub fn convert_verilog(
                         }
                         gate_line.pop();
                         gate_line.pop();
+                        let mut temp_line = String::new();
                         if is_dff {
                             let mut parts: Vec<&str> = gate_line.split(',').collect();
                             parts.pop(); // remove the last element from the vector
-                            gate_line = parts.join(","); // join the remaining elements with commas
+                            for part in parts {
+                                let mut wire_name = part.trim().to_string();
+                                while wire_dict.contains_key(&wire_name) {
+                                    wire_name = wire_dict[&wire_name].clone();
+                                    if outputs.contains(&wire_name) {
+                                        break;
+                                    }
+                                }
+                                temp_line += &(wire_name + ", ");
+                            }
+                            gate_line = temp_line.trim_end_matches(", ").to_string();
+                            // gate_line = parts.join(","); // join the remaining elements with commas
                         }
                         gate_line += ");";
                         gates.push(gate_line.to_string());

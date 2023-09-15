@@ -202,6 +202,28 @@ fn many_to_many_assignment_3() {
     assert_eq!(assign_dict["d[0]"], "s[0]");
 }
 
+/// assign dest  = { 1'h0, source[0] };
+#[test]
+fn many_to_many_assignment_4() {
+    let mut multibit_ports: HashMap<String, u32> = HashMap::new();
+    multibit_ports.insert("o_CRC".to_string(), 32);
+    let mut wire_to_port: HashMap<String, String> = HashMap::new();
+    let mut leftover_maps: HashMap<String, Vec<String>> = HashMap::new();
+    let mut assign_dict: HashMap<String, String> = HashMap::new();
+    let output_ports: HashSet<String> = HashSet::new();
+    let prompt = "  assign o_CRC = { r_CRC[31] , r_CRC[30] , r_CRC[29] , r_CRC[28] , r_CRC[27] , r_CRC[26] , r_CRC[25] , r_CRC[24] , r_CRC[23] , r_CRC[22] , r_CRC[21] , r_CRC[20] , r_CRC[19] , r_CRC[18] , r_CRC[17] , r_CRC[16] , r_CRC[15] , r_CRC[14] , r_CRC[13] , r_CRC[12] , r_CRC[11] , r_CRC[10] , r_CRC[9] , r_CRC[8] , r_CRC[7] , r_CRC[6] , r_CRC[5] , r_CRC[4] , r_CRC[3] , r_CRC[2] , r_CRC[1] , r_CRC[0]  };";
+    get_multibit_assign_wires(
+        &prompt,
+        &multibit_ports,
+        &mut wire_to_port,
+        &mut leftover_maps,
+        &mut assign_dict,
+        &output_ports,
+    );
+    assert_eq!(assign_dict["o_CRC[31]"], "r_CRC[31]");
+    assert_eq!(assign_dict["o_CRC[12]"], "r_CRC[12]")
+}
+
 /// Test for build_assign_dict function for a file with gates.
 #[test]
 fn build_assign_dict_v2_euclidean_gates() {
