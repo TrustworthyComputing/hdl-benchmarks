@@ -15,10 +15,21 @@ Our preprocessor expects a netlist written in structural Verilog and will clean 
 netlist to make it easier for frameworks to read. The structural verilog can be
 generated with the following [Yosys](https://github.com/YosysHQ/yosys) commands:
 
+For gates:
 ```shell
 read_verilog [MY_DESIGN].v
 synth
-abc -g [GATE_TYPES] 
+abc -g simple,-MUX 
+splitnets
+write_verilog -noexpr [MY_DESIGN].struct.v
+```
+
+For 2:1 LUTs:
+```shell
+read_verilog [MY_DESIGN].v
+synth
+abc -luts 2
+nlutmap -luts 0,10000000,0 (only applicable to LUTs with LBB)
 splitnets
 write_verilog -noexpr [MY_DESIGN].struct.v
 ```
