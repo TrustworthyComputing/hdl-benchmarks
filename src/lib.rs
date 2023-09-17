@@ -353,8 +353,6 @@ pub fn build_assign_dict(
                     } else {
                         println!("Error: Invalid number format.");
                     }
-                } else {
-                    println!("Error: '[' and/or ':' not found in the string: {:?}", &line);
                 }
             } else if line.contains("output") {
                 // only do that for output ports
