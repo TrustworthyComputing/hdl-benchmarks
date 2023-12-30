@@ -177,34 +177,37 @@ pub fn get_multibit_assign_wires(
         }
 
         // (left_side, right_side)
-
+        let mut new_left_side = Vec::new();
+        let mut new_right_side = Vec::new();
         // if left_side.len() != right_side.len() {
         for j in 0..left_side.len() {
             if !left_side[j].contains('[') && multibit_ports.contains_key(&left_side[j]) {
                 let tmp_id = left_side[j].clone();
-                left_side.remove(j);
                 for i in (0..multibit_ports[&tmp_id]).rev() {
-                    left_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
+                    new_left_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
                 }
+            } else {
+                new_left_side.push(left_side[j].clone());
             }
         }
         for j in 0..right_side.len() {
             if !right_side[j].contains('[') && multibit_ports.contains_key(&right_side[j]) {
                 let tmp_id = right_side[j].clone();
-                right_side.remove(j);
                 for i in (0..multibit_ports[&tmp_id]).rev() {
-                    right_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
+                    new_right_side.push(tmp_id.clone() + "[" + &i.to_string() + "]");
                 }
+            } else {
+                new_right_side.push(right_side[j].clone());
             }
         }
         assert_eq!(
-            left_side.len(),
-            right_side.len(),
+            new_left_side.len(),
+            new_right_side.len(),
             "assign statement LHS is not the same size as RHS!"
         );
-        for i in 0..left_side.len() {
-            let output = left_side[i].clone();
-            let input = right_side[i].clone();
+        for i in 0..new_left_side.len() {
+            let output = new_left_side[i].clone();
+            let input = new_right_side[i].clone();
 
             if output_ports.contains(&output) {
                 if wire_to_port.contains_key(&input) {
