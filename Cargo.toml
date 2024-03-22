@@ -36,5 +36,9 @@ name = "generate_mmult"
 path = "src/bin/generate_mmult.rs"
 
 [[bin]]
+name = "generate_lr"
+path = "src/bin/generate_lr.rs"
+
+[[bin]]
 name = "generate_euclidean_distance"
 path = "src/bin/generate_euclidean_distance.rs"
