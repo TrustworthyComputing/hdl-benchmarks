@@ -172,11 +172,8 @@ fn main() {
     println!("rows: {}, columns: {}", size, size);
 
     let filename = size.to_string()
-        + "x"
-        + &size.to_string()
-        + "_x_"
-        + &size.to_string()
-        + "-mvprod";
+        + "-attribute"
+        + "-lr";
     let verilog_filename = "./designs/".to_owned() + filename.as_str() + ".v";
     let inputs_filename = "./test-cases/".to_owned() + filename.as_str() + ".inputs.csv";
 

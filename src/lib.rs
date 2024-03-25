@@ -164,7 +164,7 @@ pub fn get_multibit_assign_wires(
                         right_side.push(wire_name.to_string());
                     }
                 }
-            } else if wire_name.contains("'h") {
+            } else if wire_name.contains("'h") || wire_name.contains("'b") {
                 // foo[1:0] = 2'h0; => foo[1], foo[0] = 1'h0, 1'h0;
                 let wire_name_split: Vec<&str> = wire_name.split('\'').collect();
                 let bit_len = wire_name_split[0].parse::<i32>().unwrap_or(0);

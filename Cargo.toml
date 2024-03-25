@@ -40,5 +40,13 @@ name = "generate_lr"
 path = "src/bin/generate_lr.rs"
 
 [[bin]]
+name = "generate_nn_2fc_sign"
+path = "src/bin/generate_nn_2fc_sign.rs"
+
+[[bin]]
+name = "generate_nn_2fc_relu"
+path = "src/bin/generate_nn_2fc_relu.rs"
+
+[[bin]]
 name = "generate_euclidean_distance"
 path = "src/bin/generate_euclidean_distance.rs"
